@@ -1,0 +1,315 @@
+{% extends "layout.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<!-- Penambahan CSS Kustom untuk Peningkatan Visual (Opsi A) -->
+<style>
+    .card-hover:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.1) !important;
+        transition: all 0.3s ease;
+    }
+    .card-border-top {
+        border-top: 4px solid;
+    }
+    .border-primary { border-color: #0d6efd !important; }
+    .border-success { border-color: #198754 !important; }
+    .border-info { border-color: #0dcaf0 !important; }
+    .border-danger { border-color: #dc3545 !important; }
+
+    .list-group-item-action:hover {
+        background-color: #f8f9fa;
+    }
+
+    .activity-icon {
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+    }
+</style>
+
+<!-- Header dengan tanggal dan timestamp -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <small id="current-date" class="text-muted">Memuat tanggal...</small>
+    <small id="last-updated" class="text-muted" title="Status perangkat diperbarui secara otomatis">Memuat...</small>
+</div>
+
+
+<!-- Kartu Statistik Utama -->
+<div class="row g-4 mb-4">
+    <!-- Total Perangkat -->
+    <div class="col-md-6 col-lg-3">
+        <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-primary">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">{{ stats.total_devices or 0 }}</h4>
+                    <div class="bg-primary bg-opacity-10 text-primary rounded-3 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
+                        <i class="fas fa-server fa-lg"></i>
+                    </div>
+                </div>
+                <p class="text-muted mb-0 mt-2">Total Perangkat</p>
+            </div>
+        </div>
+    </div>
+    <!-- Perangkat Online -->
+    <div class="col-md-6 col-lg-3">
+        <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-success">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">{{ stats.online_devices or 0 }}</h4>
+                     <div class="bg-success bg-opacity-10 text-success rounded-3 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
+                        <i class="fas fa-wifi fa-lg"></i>
+                    </div>
+                </div>
+                <p class="text-muted mb-0 mt-2">Perangkat Online</p>
+            </div>
+        </div>
+    </div>
+    <!-- Event Hari Ini -->
+    <div class="col-md-6 col-lg-3">
+        <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-info">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">{{ stats.events_today or 0 }}</h4>
+                    <div class="bg-info bg-opacity-10 text-info rounded-3 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
+                        <i class="fas fa-calendar-day fa-lg"></i>
+                    </div>
+                </div>
+                <p class="text-muted mb-0 mt-2">Event Hari Ini</p>
+            </div>
+        </div>
+    </div>
+    <!-- API Gagal Hari Ini -->
+    <div class="col-md-6 col-lg-3">
+        <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-danger">
+            <div class="card-body">
+                 <div class="d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">{{ stats.failed_api or 0 }}</h4>
+                    <div class="bg-danger bg-opacity-10 text-danger rounded-3 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
+                        <i class="fas fa-exclamation-triangle fa-lg"></i>
+                    </div>
+                </div>
+                <p class="text-muted mb-0 mt-2">API Gagal Hari Ini</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Tampilan Ringkasan dengan format List Group (Opsi A) -->
+<div class="row g-4">
+    <!-- Kolom Event Terbaru -->
+    <div class="col-lg-7">
+        <div class="card h-100 shadow-sm border-0">
+            <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-history me-2"></i>Event Terbaru</h5>
+                <a href="{{ url_for('events') }}" class="btn btn-sm btn-outline-primary">Lihat Semua</a>
+            </div>
+            <div class="card-body p-0">
+                <div class="list-group list-group-flush">
+                    {% for event in recent_events %}
+                    <a href="#" class="list-group-item list-group-item-action py-3" data-event-id="{{ event.id }}" data-bs-toggle="modal" data-bs-target="#eventDetailModal">
+                        <div class="d-flex w-100 align-items-center">
+                            <div class="flex-shrink-0 me-3">
+                                <div class="activity-icon 
+                                    {% if event.apiStatus == 'success' %} bg-success-subtle text-success-emphasis
+                                    {% elif event.apiStatus == 'failed' %} bg-danger-subtle text-danger-emphasis
+                                    {% else %} bg-secondary-subtle text-secondary-emphasis {% endif %}">
+                                    <i class="fas 
+                                        {% if event.apiStatus == 'success' %} fa-check
+                                        {% elif event.apiStatus == 'failed' %} fa-exclamation
+                                        {% else %} fa-hourglass-start {% endif %}">
+                                    </i>
+                                </div>
+                            </div>
+                            <div class="flex-grow-1">
+                                <div class="fw-bold">{{ event.name or 'N/A' }}</div>
+                                <small class="text-muted">{{ event.location or 'Tanpa Lokasi' }} &bull; {{ event.deviceName }}</small>
+                            </div>
+                            <div class="flex-shrink-0 text-end">
+                                <small class="text-muted">{{ event.time }}</small>
+                            </div>
+                        </div>
+                    </a>
+                    {% else %}
+                    <div class="text-center text-muted p-5">
+                        <p class="mb-0">Belum ada event terbaru.</p>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Kolom Status Perangkat -->
+    <div class="col-lg-5">
+        <div class="card h-100 shadow-sm border-0">
+            <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-broadcast-tower me-2"></i>Status Perangkat</h5>
+                <a href="{{ url_for('devices') }}" class="btn btn-sm btn-outline-primary">Kelola</a>
+            </div>
+            <div class="card-body p-0">
+                <div class="list-group list-group-flush">
+                    {% for device in devices_status %}
+                    <div class="list-group-item py-3">
+                         <div class="d-flex w-100 justify-content-between align-items-center">
+                            <div>
+                                <span class="fw-bold">{{ device.name or device.ip }}</span><br>
+                                <small class="text-muted">{{ device.location or '-' }}</small>
+                            </div>
+                            <span id="status-{{ device.ip.replace('.', '-') }}" class="badge rounded-pill {% if device.status == 'online' %}bg-success-subtle text-success-emphasis{% elif device.status == 'offline' %}bg-secondary-subtle text-secondary-emphasis{% else %}bg-danger-subtle text-danger-emphasis{% endif %}">
+                                {{ device.status }}
+                            </span>
+                        </div>
+                    </div>
+                    {% else %}
+                     <div class="text-center text-muted p-5">
+                        <p class="mb-0">Belum ada perangkat.</p>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Detail Event (Tidak ada perubahan) -->
+<div class="modal fade" id="eventDetailModal" tabindex="-1" aria-labelledby="eventDetailModalLabel" aria-hidden="true">
+  <div class="modal-dialog" id="event-modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="eventDetailModalLabel">Detail Event</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="modal-spinner" class="text-center my-5">
+            <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>
+        </div>
+        <div id="modal-content-area" class="d-none">
+            <div class="text-center">
+                <img id="event-image" src="" class="img-fluid rounded mb-3" alt="Foto Event" style="max-height: 70vh;">
+            </div>
+            <hr>
+            <h4><strong id="event-name"></strong></h4>
+            <p class="text-muted mb-3" id="event-desc"></p>
+            <dl class="row">
+                <dt class="col-sm-4">Id Event</dt> <dd class="col-sm-8"><span id="event-id"></span></dd>
+                <dt class="col-sm-4">Device</dt> <dd class="col-sm-8"><span id="event-device"></span></dd>
+                <dt class="col-sm-4">Lokasi</dt> <dd class="col-sm-8"><span id="event-location"></span></dd>
+                <dt class="col-sm-4">Tanggal & Waktu</dt> <dd class="col-sm-8"><span id="event-datetime"></span></dd>
+                <dt class="col-sm-4">Employee ID</dt> <dd class="col-sm-8"><span id="event-employee-id"></span></dd>
+                <dt class="col-sm-4">Tipe Sinkronisasi</dt> <dd class="col-sm-8"><span id="event-sync-type"></span></dd>
+                <dt class="col-sm-4">Status API</dt> <dd class="col-sm-8"><span id="event-api-status"></span></dd>
+            </dl>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script>
+$(document).ready(function() {
+    function updateTimestamp() {
+        const now = new Date();
+        const timeString = now.toLocaleTimeString('id-ID', {
+            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+        });
+        $('#last-updated').text('Status diperbarui pada ' + timeString + ' WIB');
+    }
+    
+    function setCurrentDate() {
+        const now = new Date();
+        const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+        const dateString = now.toLocaleDateString('id-ID', options);
+        $('#current-date').text(dateString);
+    }
+    
+    function pollDeviceStatus() {
+        $.ajax({
+            url: '/api/devices_status',
+            method: 'GET',
+            dataType: 'json',
+            success: function(devicesData) {
+                devicesData.forEach(function(device) {
+                    const statusBadge = $('#status-' + device.ip.replace(/\./g, '-'));
+                    if (statusBadge.length) {
+                        let newStatusText = device.status;
+                        let newBadgeClass = (device.status === 'online') ? 'bg-success-subtle text-success-emphasis' : 
+                                            (device.status === 'offline') ? 'bg-secondary-subtle text-secondary-emphasis' : 'bg-danger-subtle text-danger-emphasis';
+                        
+                        if (statusBadge.text().trim() !== newStatusText) {
+                            statusBadge.removeClass('bg-success-subtle text-success-emphasis bg-secondary-subtle text-secondary-emphasis bg-danger-subtle text-danger-emphasis').addClass(newBadgeClass).text(newStatusText);
+                        }
+                    }
+                });
+                updateTimestamp();
+            },
+            error: function(xhr, status, error) {
+                console.warn("Gagal polling status di dasbor:", status, error);
+            }
+        });
+    }
+
+    // Panggil fungsi saat halaman dimuat
+    setCurrentDate();
+    pollDeviceStatus();
+    setInterval(pollDeviceStatus, 15000);
+
+    const eventDetailModal = document.getElementById('eventDetailModal');
+    if (eventDetailModal) {
+        // Logika modal tidak berubah
+        const modalDialog = document.getElementById('event-modal-dialog');
+        const spinner = document.getElementById('modal-spinner');
+        const content = document.getElementById('modal-content-area');
+        const imageElement = document.getElementById('event-image');
+        
+        eventDetailModal.addEventListener('show.bs.modal', function (event) {
+            const row = event.relatedTarget;
+            const eventId = row.dataset.eventId;
+            content.classList.add('d-none');
+            spinner.classList.remove('d-none');
+            imageElement.src = '';
+            modalDialog.classList.remove('modal-sm', 'modal-lg', 'modal-xl');
+            fetch(`/api/event/${eventId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) { console.error(data.error); spinner.classList.add('d-none'); return; }
+                    document.getElementById('event-name').textContent = data.name || 'N/A';
+                    document.getElementById('event-desc').textContent = data.eventDesc || '-';
+                    document.getElementById('event-id').textContent = data.id;
+                    document.getElementById('event-device').textContent = data.deviceName || '-';
+                    document.getElementById('event-location').textContent = data.location || '-';
+                    document.getElementById('event-datetime').textContent = `${data.date} ${data.time}`;
+                    document.getElementById('event-employee-id').textContent = data.employeeId || '-';
+                    document.getElementById('event-sync-type').textContent = data.syncType || '-';
+                    document.getElementById('event-api-status').textContent = data.apiStatus || '-';
+                    imageElement.src = data.imageUrl || '';
+                    imageElement.onload = function() {
+                        const imageWidth = this.naturalWidth;
+                        modalDialog.classList.remove('modal-sm', 'modal-lg', 'modal-xl');
+                        if (imageWidth >= 900) modalDialog.classList.add('modal-xl');
+                        else if (imageWidth >= 700) modalDialog.classList.add('modal-lg');
+                        spinner.classList.add('d-none');
+                        content.classList.remove('d-none');
+                    };
+                    imageElement.onerror = function() {
+                        spinner.classList.add('d-none');
+                        content.classList.remove('d-none');
+                    };
+                })
+                .catch(error => {
+                    console.error('Fetch error:', error);
+                    spinner.classList.add('d-none');
+                });
+        });
+    }
+});
+</script>
+{% endblock %}
+

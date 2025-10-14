@@ -1,0 +1,226 @@
+{% extends "layout.html" %}
+
+{% block title %}Log Event{% endblock %}
+
+{% block content %}
+<!-- FORM FILTER UNTUK EVENTS -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="fas fa-filter me-2"></i>Filter Event</h5>
+    </div>
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('events') }}">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label for="start_date" class="form-label">Dari Tanggal</label>
+                    <input type="date" class="form-control" name="start_date" value="{{ filters.start_date or '' }}">
+                </div>
+                <div class="col-md-3">
+                    <label for="end_date" class="form-label">Sampai Tanggal</label>
+                    <input type="date" class="form-control" name="end_date" value="{{ filters.end_date or '' }}">
+                </div>
+                <div class="col-md-3">
+                    <label for="device" class="form-label">Perangkat</label>
+                    <select name="device" class="form-select">
+                        <option value="">Semua Perangkat</option>
+                        {% for device in all_devices %}
+                            <option value="{{ device.name }}" {% if device.name == filters.device %}selected{% endif %}>
+                                {{ device.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <!-- PERUBAHAN: Filter 'Nama Orang' diubah menjadi dropdown 'Lokasi' -->
+                <div class="col-md-3">
+                    <label for="location" class="form-label">Lokasi</label>
+                    <select name="location" class="form-select">
+                        <option value="">Semua Lokasi</option>
+                        {% for loc in all_locations %}
+                            <option value="{{ loc.location }}" {% if loc.location == filters.location %}selected{% endif %}>
+                                {{ loc.location }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-12 text-end">
+                    <a href="{{ url_for('events') }}" class="btn btn-secondary"><i class="fas fa-undo me-1"></i>Reset</a>
+                    <button type="submit" class="btn btn-primary"><i class="fas fa-search me-1"></i>Filter</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- TABEL EVENT -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="fas fa-history me-2"></i>Log Event</h5>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table id="eventsTable" class="table table-striped table-hover" style="width:100%">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Id</th>
+                        <th>Device</th>
+                        <th>Lokasi</th>
+                        <th>Nama</th>
+                        <th>Tanggal</th>
+                        <th>Waktu</th>
+                        <th>Tipe</th>
+                        <th style="white-space: nowrap;">Status API</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for event in events %}
+                    <tr class="event-row" data-event-id="{{ event.id }}" data-bs-toggle="modal" data-bs-target="#eventDetailModal" style="cursor: pointer;">
+                        <td>{{ event.id }}</td>
+                        <td>{{ event.deviceName }}</td>
+                        <td>{{ event.location or '-' }}</td>
+                        <td>{{ event.name or 'N/A' }}</td>
+                        <td>{{ event.date }}</td>
+                        <td>{{ event.time }}</td>
+                        <td>
+                            {% if event.syncType == 'realtime' %}<span class="badge bg-primary bg-opacity-75">Realtime</span>{% else %}<span class="badge bg-info bg-opacity-75">Catch-up</span>{% endif %}
+                        </td>
+                        <td>
+                            {% if event.apiStatus == 'success' %}<span class="badge bg-success">Success</span>
+                            {% elif event.apiStatus == 'failed' %}<span class="badge bg-danger">Failed</span>
+                            {% elif event.apiStatus == 'skipped' or event.apiStatus == 'skipped_no_api' %}<span class="badge bg-secondary">Skipped</span>
+                            {% else %}<span class="badge bg-warning text-dark">Pending</span>{% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="8" class="text-center">Tidak ada event yang cocok dengan filter Anda.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL DETAIL EVENT (LENGKAP) -->
+<div class="modal fade" id="eventDetailModal" tabindex="-1" aria-labelledby="eventDetailModalLabel" aria-hidden="true">
+  <div class="modal-dialog" id="event-modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="eventDetailModalLabel">Detail Event</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="modal-spinner" class="text-center my-5">
+            <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>
+        </div>
+        <div id="modal-content-area" class="d-none">
+            <div class="text-center">
+                <img id="event-image" src="" class="img-fluid rounded mb-3" alt="Foto Event" style="max-height: 70vh;">
+            </div>
+            <hr>
+            <h4><strong id="event-name"></strong></h4>
+            <p class="text-muted mb-3" id="event-desc"></p>
+            <dl class="row">
+                <dt class="col-sm-4">Id Event</dt> <dd class="col-sm-8"><span id="event-id"></span></dd>
+                <dt class="col-sm-4">Device</dt> <dd class="col-sm-8"><span id="event-device"></span></dd>
+                <dt class="col-sm-4">Lokasi</dt> <dd class="col-sm-8"><span id="event-location"></span></dd>
+                <dt class="col-sm-4">Tanggal & Waktu</dt> <dd class="col-sm-8"><span id="event-datetime"></span></dd>
+                <dt class="col-sm-4">Employee ID</dt> <dd class="col-sm-8"><span id="event-employee-id"></span></dd>
+                <dt class="col-sm-4">Tipe Sinkronisasi</dt> <dd class="col-sm-8"><span id="event-sync-type"></span></dd>
+                <dt class="col-sm-4">Status API</dt> <dd class="col-sm-8"><span id="event-api-status"></span></dd>
+            </dl>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.datatables.net/2.0.8/js/dataTables.js"></script>
+<script src="https://cdn.datatables.net/2.0.8/js/dataTables.bootstrap5.js"></script>
+<link rel="stylesheet" href="https://cdn.datatables.net/2.0.8/css/dataTables.bootstrap5.css">
+
+<script>
+$(document).ready(function() {
+    // 1. Inisialisasi DataTables
+    $('#eventsTable').DataTable({
+        "order": [[ 0, "desc" ]],
+        "language": {
+            "search": "Cari:",
+            "lengthMenu": "Tampilkan _MENU_ entri",
+            "info": "Menampilkan _START_ sampai _END_ dari _TOTAL_ entri",
+            "infoEmpty": "Tidak ada data ditemukan",
+            "infoFiltered": "(difilter dari _MAX_ total entri)",
+            "zeroRecords": "Tidak ada data yang cocok dengan pencarian",
+            "paginate": { 
+                "next": "Berikutnya", 
+                "previous": "Sebelumnya" 
+            }
+        },
+        "createdRow": function(row, data) {
+            if (data[7] && data[7].includes('Failed')) {
+                $(row).addClass('table-danger bg-opacity-25');
+            }
+        }
+    });
+
+    // 2. Logika pop-up detail event
+    const eventDetailModal = document.getElementById('eventDetailModal');
+    const modalDialog = document.getElementById('event-modal-dialog');
+    const spinner = document.getElementById('modal-spinner');
+    const content = document.getElementById('modal-content-area');
+    const imageElement = document.getElementById('event-image');
+    
+    eventDetailModal.addEventListener('show.bs.modal', function (event) {
+        const row = event.relatedTarget;
+        const eventId = row.dataset.eventId;
+
+        content.classList.add('d-none');
+        spinner.classList.remove('d-none');
+        imageElement.src = '';
+        modalDialog.classList.remove('modal-sm', 'modal-lg', 'modal-xl');
+
+        fetch(`/api/event/${eventId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    console.error(data.error);
+                    spinner.classList.add('d-none');
+                    return;
+                }
+                
+                document.getElementById('event-name').textContent = data.name || 'N/A';
+                document.getElementById('event-desc').textContent = data.eventDesc || '-';
+                document.getElementById('event-id').textContent = data.id;
+                document.getElementById('event-device').textContent = data.deviceName || '-';
+                document.getElementById('event-location').textContent = data.location || '-';
+                document.getElementById('event-datetime').textContent = `${data.date} ${data.time}`;
+                document.getElementById('event-employee-id').textContent = data.employeeId || '-';
+                document.getElementById('event-sync-type').textContent = data.syncType || '-';
+                document.getElementById('event-api-status').textContent = data.apiStatus || '-';
+                
+                imageElement.src = data.imageUrl || '';
+
+                imageElement.onload = function() {
+                    const imageWidth = this.naturalWidth;
+                    modalDialog.classList.remove('modal-sm', 'modal-lg', 'modal-xl');
+                    if (imageWidth >= 900) modalDialog.classList.add('modal-xl');
+                    else if (imageWidth >= 700) modalDialog.classList.add('modal-lg');
+                    
+                    spinner.classList.add('d-none');
+                    content.classList.remove('d-none');
+                };
+                imageElement.onerror = function() {
+                    spinner.classList.add('d-none');
+                    content.classList.remove('d-none');
+                };
+            })
+            .catch(error => {
+                console.error('Fetch error:', error);
+                spinner.classList.add('d-none');
+            });
+    });
+});
+</script>
+{% endblock %}
+

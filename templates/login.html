@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="id">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Masuk - Face Recognition Terminal</title>
+    <!-- CSS dari CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <!-- Kustomisasi Tampilan untuk Halaman Login -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap');
+
+        :root {
+            --primary-color: #0d6efd;
+            --danger-color: #dc3545;
+            --text-color: #212529;
+            --text-muted-color: #6c757d;
+            --border-color: #dee2e6;
+            --background-color: #f0f2f5;
+            --card-bg-color: #ffffff;
+        }
+
+        html, body {
+            height: 100%;
+        }
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: var(--background-color);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Styling untuk kartu login */
+        .login-card {
+            width: 100%;
+            max-width: 420px;
+            padding: 2.5rem;
+            background-color: var(--card-bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 1rem;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.1);
+            z-index: 1;
+        }
+        
+        /* Header pada kartu login */
+        .login-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .login-header .icon {
+            font-size: 3rem;
+            color: var(--primary-color);
+            margin-bottom: 1rem;
+        }
+        .login-header h2 {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+            font-size: 1.5rem;
+        }
+        .login-header p {
+            font-size: 0.95rem;
+        }
+
+        /* Styling untuk input field dengan ikon */
+        .input-group {
+            position: relative;
+        }
+        .form-control {
+            padding: 0.9rem 1rem 0.9rem 2.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .form-control:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+        }
+        .input-group .icon {
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted-color);
+        }
+
+        .btn-primary {
+            padding: 0.9rem 1rem;
+            font-weight: 500;
+            border-radius: 0.5rem;
+        }
+        
+        /* Styling untuk pesan feedback/error */
+        .feedback-message {
+            font-size: 0.875rem;
+            color: #842029;
+            background-color: #f8d7da;
+            border: 1px solid #f5c2c7;
+            border-radius: 0.5rem;
+            padding: 0.75rem 1rem;
+            text-align: left;
+            display: flex;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        .feedback-message i {
+            margin-right: 0.75rem;
+        }
+
+        /* Animasi "shake" jika login gagal */
+        @keyframes shake {
+            10%, 90% { transform: translate3d(-1px, 0, 0); }
+            20%, 80% { transform: translate3d(2px, 0, 0); }
+            30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+            40%, 60% { transform: translate3d(4px, 0, 0); }
+        }
+        .shake {
+            animation: shake 0.82s cubic-bezier(.36,.07,.19,.97) both;
+        }
+    </style>
+</head>
+<body>
+    <!-- Menambahkan class 'shake' jika ada pesan error dari Flask -->
+    <div class="login-card {% if get_flashed_messages() %}shake{% endif %}">
+        <div class="login-header">
+            <div class="icon">
+                <i class="fas fa-network-wired"></i>
+            </div>
+            <h2>Face Recognition Terminal</h2>
+            <p class="text-muted">Silakan masuk untuk melanjutkan.</p>
+        </div>
+        
+        <form method="POST">
+            <!-- Menampilkan pesan error (flash message) -->
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="feedback-message">
+                            <i class="fas fa-exclamation-circle"></i>
+                            <span>{{ message }}</span>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <div class="mb-3">
+                <div class="input-group">
+                    <i class="fas fa-user icon"></i>
+                    <input type="text" class="form-control" name="username" placeholder="Username" required autofocus>
+                </div>
+            </div>
+            <div class="mb-3">
+                <div class="input-group">
+                     <i class="fas fa-lock icon"></i>
+                    <input type="password" class="form-control" name="password" placeholder="Password" required>
+                </div>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="remember" id="rememberMe">
+                    <label class="form-check-label" for="rememberMe">Ingat Saya</label>
+                </div>
+            </div>
+            <div class="d-grid">
+                <button type="submit" class="btn btn-primary">Masuk</button>
+            </div>
+        </form>
+    </div>
+</body>
+</html>
+
