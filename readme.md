@@ -1,7 +1,3 @@
-Tentu. Berdasarkan seluruh program yang telah kita bangun, berikut adalah draf `README.md` yang lengkap dan profesional. Anda bisa langsung menyalinnya ke dalam file `README.md` di proyek Anda.
-
------
-
 # Terminal Sinkronisasi Event Hikvision
 
 ## Deskripsi
