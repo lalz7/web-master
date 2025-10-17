@@ -30,10 +30,21 @@ def init_db():
             name VARCHAR(255),
             location VARCHAR(255),
             targetApi VARCHAR(255) NULL,
+            username VARCHAR(255) NULL,
+            password VARCHAR(255) NULL,
             status VARCHAR(20) DEFAULT 'offline',
             lastSync DATETIME NULL
         )
     """)
+    # Menambahkan kolom username dan password jika belum ada (untuk migrasi)
+    try:
+        c.execute("ALTER TABLE devices ADD COLUMN username VARCHAR(255) NULL")
+        c.execute("ALTER TABLE devices ADD COLUMN password VARCHAR(255) NULL")
+    except mysql.connector.Error as err:
+        # Abaikan error jika kolom sudah ada
+        if err.errno != 1060: # Error code for 'Duplicate column name'
+            raise
+
     c.close()
     conn.close()
 
@@ -144,13 +155,13 @@ def get_events_by_date(target_date, location=None, ip=None):
     conn.close()
     return events
 
-def add_device(ip, name, location, target_api):
+def add_device(ip, name, location, target_api, username, password):
     """Menambahkan perangkat baru ke database."""
     conn = get_db()
     c = conn.cursor()
     try:
-        c.execute("INSERT INTO devices (ip, name, location, targetApi, status) VALUES (%s, %s, %s, %s, 'new')", 
-                  (ip, name, location, target_api))
+        c.execute("INSERT INTO devices (ip, name, location, targetApi, username, password, status) VALUES (%s, %s, %s, %s, %s, %s, 'new')", 
+                  (ip, name, location, target_api, username, password))
         return True, "Perangkat berhasil ditambahkan."
     except mysql.connector.IntegrityError:
         return False, "Perangkat dengan IP tersebut sudah ada."
@@ -158,12 +169,19 @@ def add_device(ip, name, location, target_api):
         c.close()
         conn.close()
 
-def update_device(original_ip, name, location, target_api):
+def update_device(original_ip, name, location, target_api, username, password):
     """Memperbarui data perangkat di database."""
     conn = get_db()
     c = conn.cursor()
-    c.execute("UPDATE devices SET name=%s, location=%s, targetApi=%s WHERE ip=%s", 
-              (name, location, target_api, original_ip))
+    # Hanya update password jika diisi, jika tidak, pertahankan yang lama
+    if password:
+        query = "UPDATE devices SET name=%s, location=%s, targetApi=%s, username=%s, password=%s WHERE ip=%s"
+        values = (name, location, target_api, username, password, original_ip)
+    else:
+        query = "UPDATE devices SET name=%s, location=%s, targetApi=%s, username=%s WHERE ip=%s"
+        values = (name, location, target_api, username, original_ip)
+        
+    c.execute(query, values)
     affected = c.rowcount
     c.close()
     conn.close()
@@ -254,4 +272,3 @@ def get_recent_events(limit=5):
     c.close()
     conn.close()
     return events
-

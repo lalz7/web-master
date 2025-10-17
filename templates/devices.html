@@ -3,7 +3,6 @@
 {% block title %}Kelola Perangkat{% endblock %}
 
 {% block content %}
-<!-- CSS untuk animasi feedback saat status berubah -->
 <style>
     @keyframes flash-green {
       0%, 100% { background-color: #198754; box-shadow: none; }
@@ -25,7 +24,6 @@
 <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="mb-0"><i class="fas fa-server me-2"></i>Kelola Perangkat</h5>
-        <!-- Tombol untuk memicu modal tambah perangkat -->
         <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addDeviceModal">
             <i class="fas fa-plus me-1"></i> Tambah Perangkat
         </button>
@@ -37,6 +35,7 @@
                     <tr>
                         <th>Nama</th>
                         <th>IP Address</th>
+                        <th>Username</th>
                         <th>Lokasi</th>
                         <th>Sync Terakhir</th>
                         <th>Status</th>
@@ -46,27 +45,24 @@
                 <tbody>
                     {% for device in devices %}
                     <tr>
-                        <!-- Nama perangkat bisa diklik untuk memfilter log event -->
                         <td><a href="{{ url_for('index', device=device.name) }}" class="fw-bold text-decoration-none">{{ device.name }}</a></td>
                         <td>{{ device.ip }}</td>
+                        <td>{{ device.username or '-' }}</td>
                         <td>{{ device.location or '-' }}</td>
-                        <!-- Atribut data-ip-sync digunakan oleh JavaScript untuk update real-time -->
                         <td data-ip-sync="{{ device.ip }}">{{ device.lastSync.strftime('%d-%m-%Y %H:%M:%S') if device.lastSync else 'Belum pernah' }}</td>
                         <td>
-                            <!-- Badge status dengan ID unik untuk update via JavaScript -->
                             <span id="status-{{ device.ip.replace('.', '-') }}" class="badge {% if device.status == 'online' %}bg-success{% elif device.status == 'offline' %}bg-secondary{% elif device.status == 'error' %}bg-danger{% else %}bg-warning text-dark{% endif %}">
                                 {{ device.status }}
                             </span>
                         </td>
                         <td class="text-center">
-                            <!-- Tombol aksi untuk setiap perangkat -->
                             <button class="btn btn-sm btn-outline-primary ping-btn" data-ip="{{ device.ip }}" title="Live Ping"><i class="fas fa-wifi"></i></button>
                             <button type="button" class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#editModal-{{ device.ip.replace('.', '-') }}" title="Edit"><i class="fas fa-edit"></i></button>
                             <button class="btn btn-sm btn-outline-danger delete-btn" data-ip="{{ device.ip }}" data-name="{{ device.name }}" title="Hapus"><i class="fas fa-trash"></i></button>
                         </td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="6" class="text-center">Belum ada perangkat yang ditambahkan.</td></tr>
+                    <tr><td colspan="7" class="text-center">Belum ada perangkat yang ditambahkan.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
@@ -74,7 +70,6 @@
     </div>
 </div>
 
-<!-- Modal untuk Tambah Perangkat Baru -->
 <div class="modal fade" id="addDeviceModal" tabindex="-1" aria-labelledby="addDeviceModalLabel" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -91,6 +86,16 @@
                     <div class="mb-3">
                         <label for="name" class="form-label">Nama Perangkat</label>
                         <input type="text" class="form-control" name="name" required>
+                    </div>
+                     <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="username" class="form-label">Username</label>
+                            <input type="text" class="form-control" name="username" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="password" class="form-label">Password</label>
+                            <input type="password" class="form-control" name="password" required>
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label for="location" class="form-label">Lokasi</label>
@@ -110,7 +115,6 @@
     </div>
 </div>
 
-<!-- Loop untuk membuat Modal Edit untuk SETIAP perangkat -->
 {% for device in devices %}
 <div class="modal fade" id="editModal-{{ device.ip.replace('.', '-') }}" tabindex="-1" aria-labelledby="editModalLabel-{{ device.ip.replace('.', '-') }}" aria-hidden="true">
     <div class="modal-dialog">
@@ -129,6 +133,16 @@
                     <div class="mb-3">
                         <label class="form-label">Nama Perangkat</label>
                         <input type="text" class="form-control" name="name" value="{{ device.name }}" required>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Username</label>
+                            <input type="text" class="form-control" name="username" value="{{ device.username }}" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Password</label>
+                            <input type="password" class="form-control" name="password" placeholder="Isi untuk mengubah">
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Lokasi</label>
@@ -149,12 +163,10 @@
 </div>
 {% endfor %}
 
-<!-- Form Hapus (tersembunyi), digunakan oleh SweetAlert -->
 <form id="deleteForm" method="POST" action=""><input type="hidden" name="ip" id="deleteIp"></form>
 {% endblock %}
 
 {% block scripts %}
-<!-- Memuat library jQuery, DataTables, dan SweetAlert2 -->
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script src="https://cdn.datatables.net/2.0.8/js/dataTables.js"></script>
 <script src="https://cdn.datatables.net/2.0.8/js/dataTables.bootstrap5.js"></script>

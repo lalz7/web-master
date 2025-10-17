@@ -24,7 +24,11 @@ class User(UserMixin):
         self.id, self.username, self.password_hash = id, username, generate_password_hash(password)
     def check_password(self, password): return check_password_hash(self.password_hash, password)
 
-admin_user = User(id=1, username='admin', password='bukalah123')
+# Mengambil kredensial dari environment variables dengan nilai default
+ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'bukalah123')
+
+admin_user = User(id=1, username=ADMIN_USERNAME, password=ADMIN_PASSWORD)
 users = {str(admin_user.id): admin_user}
 
 @login_manager.user_loader
@@ -92,22 +96,22 @@ def devices():
 @app.route('/devices/add', methods=['POST'])
 @login_required
 def add_device():
-    ip, name, location, target_api = (request.form.get(key) for key in ['ip', 'name', 'location', 'targetApi'])
-    if not ip or not name:
-        flash('IP dan Nama Perangkat wajib diisi.', 'danger')
+    ip, name, location, target_api, username, password = (request.form.get(key) for key in ['ip', 'name', 'location', 'targetApi', 'username', 'password'])
+    if not ip or not name or not username or not password:
+        flash('IP, Nama, Username, dan Password wajib diisi.', 'danger')
     else:
-        success, message = db.add_device(ip, name, location, target_api)
+        success, message = db.add_device(ip, name, location, target_api, username, password)
         flash(message, 'success' if success else 'danger')
     return redirect(url_for('devices'))
 
 @app.route('/devices/update', methods=['POST'])
 @login_required
 def update_device():
-    ip, name, location, target_api = (request.form.get(key) for key in ['ip', 'name', 'location', 'targetApi'])
-    if not ip or not name:
-        flash('IP dan Nama Perangkat wajib diisi.', 'danger')
+    ip, name, location, target_api, username, password = (request.form.get(key) for key in ['ip', 'name', 'location', 'targetApi', 'username', 'password'])
+    if not ip or not name or not username:
+        flash('IP, Nama, dan Username wajib diisi.', 'danger')
     else:
-        if db.update_device(ip, name, location, target_api):
+        if db.update_device(ip, name, location, target_api, username, password):
             flash('Perangkat berhasil diperbarui.', 'success')
         else:
             flash('Gagal memperbarui perangkat atau tidak ada perubahan data.', 'warning')
@@ -193,4 +197,3 @@ if __name__ == '__main__':
     # Memastikan tabel ada saat aplikasi pertama kali dijalankan
     db.init_db()
     app.run(debug=True, host='0.0.0.0')
-

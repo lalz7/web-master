@@ -270,7 +270,7 @@ def ping_device_os(ip):
     cmd = f"ping {param} {ip}"
     return os.system(cmd + " > NUL 2>&1" if platform.system().lower()=="windows" else cmd + " > /dev/null 2>&1") == 0
 
-def main_sync(username, password):
+def main_sync():
     db.init_db()
     print("[INFO] Memulai Sinkronisasi Event Hikvision... (CTRL+C untuk berhenti)\n")
     try:
@@ -282,6 +282,13 @@ def main_sync(username, password):
                 continue
             for device in devices:
                 ip = device.get("ip")
+                username = device.get("username")
+                password = device.get("password")
+
+                if not username or not password:
+                    log(device, "[WARN] Username atau Password belum diatur untuk perangkat ini. Dilewati.")
+                    continue
+
                 if ip in SUSPEND_UNTIL and time.time() < SUSPEND_UNTIL[ip]: continue
                 if not ping_device_os(ip):
                     FAIL_COUNT[ip] = FAIL_COUNT.get(ip, 0) + 1
@@ -322,10 +329,4 @@ def main_sync(username, password):
 
 # --- ENTRY POINT ---
 if __name__ == "__main__":
-    hik_user = HIK_USER or input("Masukkan Username Perangkat Hikvision: ")
-    hik_pass = HIK_PASS or getpass("Masukkan Password Perangkat Hikvision: ")
-    if not hik_user or not hik_pass:
-        print("[ERROR] Username dan Password tidak boleh kosong.")
-    else:
-        main_sync(hik_user, hik_pass)
-
+    main_sync()
