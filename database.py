@@ -238,11 +238,13 @@ def get_dashboard_stats():
     online_devices = c.fetchone()['online_devices']
     
     today_str = date.today().strftime('%Y-%m-%d')
-    c.execute("SELECT COUNT(*) as events_today FROM events WHERE date = %s", (today_str,))
-    events_today = c.fetchone()['events_today']
-
-    c.execute("SELECT COUNT(*) as failed_api FROM events WHERE date = %s AND apiStatus = 'failed'", (today_str,))
-    failed_api = c.fetchone()['failed_api']
+    
+    # Menggunakan fungsi get_events yang sama persis dengan halaman log untuk konsistensi
+    filters_for_today = {'start_date': today_str, 'end_date': today_str}
+    events_today_list = get_events(**filters_for_today)
+    
+    events_today_count = len(events_today_list)
+    failed_api_count = sum(1 for event in events_today_list if event.get('apiStatus') == 'failed')
     
     c.close()
     conn.close()
@@ -250,8 +252,8 @@ def get_dashboard_stats():
     return {
         'total_devices': total_devices,
         'online_devices': online_devices,
-        'events_today': events_today,
-        'failed_api': failed_api
+        'events_today': events_today_count,
+        'failed_api': failed_api_count
     }
 
 def get_recent_events(limit=5):
