@@ -1,4 +1,5 @@
 /payload_logs
+/service_logs
 /static
 /venv
 /__pycache__

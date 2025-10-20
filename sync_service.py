@@ -8,15 +8,42 @@ import os
 import re
 import base64
 import json
-from getpass import getpass
+import logging
+from logging.handlers import TimedRotatingFileHandler
 
 # Impor konfigurasi dan modul database kustom
 from config import *
 import database as db
 
+# --- SETUP LOGGING PROFESIONAL ---
+logger = logging.getLogger("SyncServiceLogger")
+logger.setLevel(logging.INFO)
+formatter = logging.Formatter('%(message)s')
+
+# Handler untuk konsol
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(formatter)
+logger.addHandler(stream_handler)
+
+# Handler untuk file harian
+if SERVICE_LOG_DIR:
+    try:
+        if not os.path.exists(SERVICE_LOG_DIR):
+            os.makedirs(SERVICE_LOG_DIR)
+        
+        log_file = os.path.join(SERVICE_LOG_DIR, "sync_service.log")
+        file_handler = TimedRotatingFileHandler(log_file, when="midnight", interval=1, backupCount=30, encoding='utf-8')
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    except Exception as e:
+        logger.error(f"FATAL: Gagal menginisialisasi file logger: {e}")
+# --- AKHIR SETUP LOGGING ---
+
+
 # --- Runtime Counters (Jangan Diubah) ---
 FAIL_COUNT = {}
 SUSPEND_UNTIL = {}
+LAST_KNOWN_STATUS = {} # Untuk melacak status koneksi dan menghindari log berulang
 # ----------------------------------------
 
 # --- EVENT_MAP hanya berisi satu event yang dianggap valid ---
@@ -62,7 +89,7 @@ def get_last_sync_time(ip):
         dt = row[0]
         if isinstance(dt, datetime.datetime):
             return dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
-    dt = datetime.datetime.now() - datetime.timedelta(days=1)
+    dt = datetime.datetime.now() - datetime.timedelta(days=30)
     return dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
 
 def set_device_status(ip, status):
@@ -78,7 +105,7 @@ def update_api_status(db_id, status):
     try:
         c.execute("UPDATE events SET apiStatus=%s WHERE id=%s", (status, db_id))
     except Exception as e:
-        print(f"Error updating API status: {e}")
+        log_system("Error updating API status: {e}", level="ERROR")
     finally:
         c.close()
         conn.close()
@@ -93,14 +120,46 @@ def event_exists(eventId, device_name):
     return exists
 # ----------------------------------------------------
 
-# --- LOGGER & LOGGING ---
-def log(device, message):
-    """Menampilkan log ke konsol dengan format standar."""
+# --- FUNGSI LOGGING KUSTOM ---
+def log(device, message, level="INFO"):
+    """
+    Memformat dan mencatat pesan untuk perangkat tertentu.
+    Urutan: [Tanggal] [Waktu] [Nama Perangkat] [Level] Pesan
+    """
     label = device_label(device)
     now = datetime.datetime.now()
-    t = now.strftime("%H:%M:%S")
     d = now.strftime("%d-%m-%Y")
-    print(f"[{label}] [{t}] [{d}] {message}")
+    t = now.strftime("%H:%M:%S")
+    
+    level_map = {"OK": "INFO", "WARN": "WARNING"}
+    log_level = level_map.get(level.upper(), level.upper())
+    
+    formatted_message = f"[{d}] [{t}] [{label}] [{log_level}] {message}"
+    
+    if log_level == "ERROR":
+        logger.error(formatted_message)
+    elif log_level == "WARNING":
+        logger.warning(formatted_message)
+    else:
+        logger.info(formatted_message)
+
+def log_system(message, level="INFO"):
+    """Mencatat pesan umum sistem."""
+    now = datetime.datetime.now()
+    d = now.strftime("%d-%m-%Y")
+    t = now.strftime("%H:%M:%S")
+    log_level = level.upper()
+    
+    formatted_message = f"[{d}] [{t}] [SYSTEM] [{log_level}] {message}"
+
+    if log_level == "ERROR":
+        logger.error(formatted_message)
+    elif log_level == "WARNING":
+        logger.warning(formatted_message)
+    else:
+        logger.info(formatted_message)
+# --- AKHIR FUNGSI LOGGING ---
+
 
 def save_payload_to_log_file(payload, device, eventId):
     """Menyimpan payload lengkap ke file JSON terpisah."""
@@ -112,9 +171,9 @@ def save_payload_to_log_file(payload, device, eventId):
         file_path = os.path.join(LOG_DIR, file_name)
         with open(file_path, 'w') as f:
             json.dump(payload, f, indent=4)
-        print(f"    +-- [INFO] Payload lengkap tersimpan di: {file_path}")
+        log(device, f"Payload lengkap tersimpan di: {file_path}")
     except Exception as e:
-        print(f"    +-- [WARN] Gagal menyimpan payload ke file log: {e}")
+        log(device, f"Gagal menyimpan payload ke file log: {e}", level="WARN")
 
 # --- API & IMAGE ---
 def send_event_to_api(event_data, device, user, password, db_event_id):
@@ -122,26 +181,26 @@ def send_event_to_api(event_data, device, user, password, db_event_id):
     target_api = device.get('targetApi')
     
     if not target_api:
-        print("    +-- [INFO] Target API tidak diatur untuk perangkat ini. Pengiriman dilewati.")
+        log(device, "Target API tidak diatur, pengiriman dilewati.")
         update_api_status(db_event_id, "skipped_no_api")
         return
 
     if not event_data.get("employeeId"):
-        print("    +-- [INFO] Event tanpa employeeId, pengiriman ke API dilewati.")
+        log(device, "Event tanpa employeeId, pengiriman ke API dilewati.")
         update_api_status(db_event_id, "skipped")
         return
     
     try:
-        r_img = requests.get(event_data["pictureURL"], auth=HTTPDigestAuth(user, password), timeout=15)
+        r_img = requests.get(event_data["pictureURL"], auth=HTTPDigestAuth(user, password), timeout=REQUEST_TIMEOUT)
         if r_img.status_code == 200:
             image_base64 = base64.b64encode(r_img.content).decode('utf-8')
             image_status_msg = f"Terkirim ({len(r_img.content) // 1024} KB)"
         else:
-            print(f"    +-- [WARN] Gagal mendapatkan gambar dari device (HTTP {r_img.status_code}).")
+            log(device, f"Gagal mendapatkan gambar dari device (HTTP {r_img.status_code}).", level="WARN")
             update_api_status(db_event_id, "failed")
             return
     except Exception as e:
-        print(f"    +-- [ERROR] Error koneksi saat mengambil gambar: {e}")
+        log(device, f"Error koneksi saat mengambil gambar: {e}", level="ERROR")
         update_api_status(db_event_id, "failed")
         return
 
@@ -152,10 +211,10 @@ def send_event_to_api(event_data, device, user, password, db_event_id):
     
     save_payload_to_log_file(payload, device, event_data.get("eventId", "unknown"))
     sent_details = (f"authId: {payload['authId']}, device: '{payload['device']}', date: {payload['date']}, image: {image_status_msg}")
-    print(f"    +-- [INFO] Mengirim ke '{target_api}' -> {sent_details}")
+    log(device, f"Mengirim ke '{target_api}' -> {sent_details}")
 
     try:
-        r_api = requests.post(target_api, json=payload, timeout=20)
+        r_api = requests.post(target_api, json=payload, timeout=REQUEST_TIMEOUT)
         status_code = r_api.status_code
         response_details = ""
         try:
@@ -168,11 +227,12 @@ def send_event_to_api(event_data, device, user, password, db_event_id):
             response_details = (f"authId: {received_auth_id}, device: '{received_device}', date: {received_date}, status: {response_status}")
         except (json.JSONDecodeError, ValueError):
             response_details = f"Status Code [{status_code}], Body: {r_api.text[:100]}..."
-        log_char = "[OK]" if status_code in [200, 201] else "[FAIL]"
-        print(f"    +-- {log_char} Respons <- {response_details}")
+        
+        log_level = "INFO" if status_code in [200, 201] else "ERROR"
+        log(device, f"Respons API <- {response_details}", level=log_level)
         update_api_status(db_event_id, "success" if status_code in [200, 201] else "failed")
     except requests.exceptions.RequestException as e:
-        print(f"    +-- [ERROR] Gagal koneksi ke API: {e}")
+        log(device, f"Gagal koneksi ke API: {e}", level="ERROR")
         update_api_status(db_event_id, "failed")
 
 # --- HIKVISION & EVENT PROCESSING ---
@@ -180,13 +240,30 @@ def iso8601_now(offset_seconds=0):
     t = datetime.datetime.now() - datetime.timedelta(seconds=offset_seconds)
     return t.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
 
-def get_events_from_device(ip, user, password, start_time, end_time):
+def get_events_from_device(device, start_time, end_time):
+    """Mengambil event, kini menerima seluruh objek device untuk kredensial."""
+    ip = device.get("ip")
+    user = device.get("username")
+    password = device.get("password")
+    
     url = f"http://{ip}/ISAPI/AccessControl/AcsEvent?format=json"
     body = {"AcsEventCond": {"searchID": "batch", "searchResultPosition": 0, "maxResults": BATCH_MAX_RESULTS,
                              "major": 0, "minor": 0, "startTime": start_time, "endTime": end_time}}
-    r = requests.post(url, json=body, auth=HTTPDigestAuth(user, password), timeout=15)
-    r.raise_for_status()
-    return r.json().get("AcsEvent", {}).get("InfoList", [])
+    
+    try:
+        r = requests.post(url, json=body, auth=HTTPDigestAuth(user, password), timeout=REQUEST_TIMEOUT)
+        r.raise_for_status() 
+        
+        events_list = r.json().get("AcsEvent", {}).get("InfoList", [])
+        return events_list
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 401:
+            log(device, "Gagal mengambil event: 401 Unauthorized. Periksa username dan password.", level="ERROR")
+        else:
+            log(device, f"Gagal mengambil event. HTTP Error: {e}", level="ERROR")
+    except requests.exceptions.RequestException as e:
+        log(device, f"Gagal mengambil event. Error koneksi: {e}", level="ERROR")
+    return [] 
 
 def get_event_desc(event):
     """
@@ -195,10 +272,15 @@ def get_event_desc(event):
     """
     return EVENT_MAP.get((event.get("major"), event.get("minor")), "Event Tidak Dikenali")
 
-def save_event(event, device, user, password):
+def save_event(event, device):
+    """Menyimpan event, kini menerima seluruh objek device."""
+    user = device.get("username")
+    password = device.get("password")
+    
     eventId, device_name, pictureURL = event.get("serialNo"), device_label(device), event.get("pictureURL")
     if not pictureURL or event_exists(eventId, device_name):
         return False
+        
     try:
         dt = datetime.datetime.strptime(event.get("time")[:19], "%Y-%m-%dT%H:%M:%S")
         date_value, time_value = dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M:%S")
@@ -211,10 +293,10 @@ def save_event(event, device, user, password):
     event_desc = get_event_desc(event)
     is_valid_event = (event_desc == "Face recognized")
     
-    log(device, f"[INFO] Memproses event baru (ID: {eventId}) untuk '{name}'...")
+    log(device, f"Memproses event baru (ID: {eventId}) untuk '{name}'...")
     
     if not is_valid_event:
-        print(f"    +-- [INFO] Event '{event_desc}' tidak valid. Akan ditandai sebagai gagal.")
+        log(device, f"Event '{event_desc}' tidak valid. Akan ditandai sebagai gagal.")
         
     initial_api_status = 'pending' if is_valid_event else 'failed'
 
@@ -227,7 +309,7 @@ def save_event(event, device, user, password):
             relative_folder = os.path.join("images", safe_dev, date_folder)
             absolute_folder = os.path.join("static", relative_folder)
             if not os.path.exists(absolute_folder): os.makedirs(absolute_folder, exist_ok=True)
-            r_img = requests.get(pictureURL, auth=HTTPDigestAuth(user, password), timeout=15)
+            r_img = requests.get(pictureURL, auth=HTTPDigestAuth(user, password), timeout=REQUEST_TIMEOUT)
             if r_img.status_code == 200:
                 safe_name = sanitize_name(name) if name else "unknown"
                 file_name = f"{safe_name}-{eventId}.jpg"
@@ -235,9 +317,9 @@ def save_event(event, device, user, password):
                 absolute_file_path = os.path.join(absolute_folder, file_name)
                 with open(absolute_file_path, "wb") as f:
                     f.write(r_img.content)
-                print(f"    +-- [INFO] Gambar tersimpan di: {absolute_file_path}")
+                log(device, f"Gambar tersimpan di: {absolute_file_path}")
         except Exception as e:
-            print(f"    +-- [WARN] Error download gambar: {e}")
+            log(device, f"Error download gambar: {e}", level="WARN")
 
     sync_type = "realtime" if dt and abs((datetime.datetime.now() - dt).total_seconds()) <= 100 else "catch-up"
     conn, c, db_event_id = db.get_db(), None, None
@@ -258,7 +340,7 @@ def save_event(event, device, user, password):
     except mysql.connector.IntegrityError: 
         return False
     except Exception as e: 
-        print(f"    +-- [ERROR] DB error: {e}")
+        log(device, f"DB error: {e}", level="ERROR")
         return False
     finally:
         if c: c.close()
@@ -272,61 +354,80 @@ def ping_device_os(ip):
 
 def main_sync():
     db.init_db()
-    print("[INFO] Memulai Sinkronisasi Event Hikvision... (CTRL+C untuk berhenti)\n")
+    log_system("Memulai Sinkronisasi Event Hikvision...")
     try:
         while True:
             devices = db.get_all_devices()
             if not devices:
-                print("[INFO] Tidak ada device yang terdaftar. Menunggu 15 detik...")
+                log_system("Tidak ada device yang terdaftar. Menunggu 15 detik...")
                 time.sleep(15)
                 continue
             for device in devices:
                 ip = device.get("ip")
-                username = device.get("username")
-                password = device.get("password")
-
-                if not username or not password:
-                    log(device, "[WARN] Username atau Password belum diatur untuk perangkat ini. Dilewati.")
+                
+                if not device.get("username") or not device.get("password"):
+                    log(device, "Username atau Password belum diatur. Dilewati.", level="WARN")
                     continue
 
                 if ip in SUSPEND_UNTIL and time.time() < SUSPEND_UNTIL[ip]: continue
+                
                 if not ping_device_os(ip):
                     FAIL_COUNT[ip] = FAIL_COUNT.get(ip, 0) + 1
                     if FAIL_COUNT[ip] >= PING_MAX_FAIL:
+                        if LAST_KNOWN_STATUS.get(ip) != 'offline':
+                            log(device, f"Koneksi terputus. Disuspend selama {SUSPEND_SECONDS // 60} menit.", level="WARN")
+                            set_device_status(ip, "offline")
+                            LAST_KNOWN_STATUS[ip] = 'offline'
                         SUSPEND_UNTIL[ip] = time.time() + SUSPEND_SECONDS
-                        log(device, f"[WARN] Koneksi terputus. Perangkat disuspend selama {SUSPEND_SECONDS // 60} menit.")
-                        set_device_status(ip, "offline")
                     else:
-                        log(device, f"[WARN] Ping gagal, percobaan ke-{FAIL_COUNT[ip]} dari {PING_MAX_FAIL}.")
+                        log(device, f"Ping gagal, percobaan ke-{FAIL_COUNT[ip]} dari {PING_MAX_FAIL}.", level="WARN")
                     continue
-                was_failing = FAIL_COUNT.get(ip, 0) > 0 or device.get('status') != 'online'
+                
+                # --- LOGIKA LOGGING CERDAS ---
+                # Hanya tampilkan log jika status berubah menjadi online
+                if LAST_KNOWN_STATUS.get(ip) != 'online':
+                    log_message = "Terhubung kembali." if LAST_KNOWN_STATUS.get(ip) else "Terhubung, memulai sinkronisasi event..."
+                    log(device, log_message, level="OK" if LAST_KNOWN_STATUS.get(ip) else "INFO")
+                    set_device_status(ip, "online")
+                    LAST_KNOWN_STATUS[ip] = 'online'
+                # --- AKHIR LOGIKA ---
+
+                # Reset fail counts setelah ping berhasil
                 FAIL_COUNT[ip] = 0
                 SUSPEND_UNTIL.pop(ip, None)
-                if was_failing:
-                    log(device, "[OK] Terhubung kembali. Memeriksa event...")
-                    set_device_status(ip, "online")
+
                 try:
                     last_sync = get_last_sync_time(ip)
                     now_time = iso8601_now()
-                    events = get_events_from_device(ip, username, password, last_sync, now_time)
+                    
+                    events = get_events_from_device(device, last_sync, now_time)
+                    
                     if not events: continue
+                    
                     events.sort(key=lambda x: int(x.get("serialNo") or 0))
                     newest_time, saved_count = last_sync, 0
+                    
                     for e in events:
-                        if save_event(e, device, username, password):
+                        if save_event(e, device):
                             newest_time = e.get("time", newest_time)
                             saved_count += 1
+                    
                     if saved_count > 0: log(device, f"Total {saved_count} event baru berhasil diproses.")
                     if newest_time != last_sync: set_last_sync_time(ip, newest_time)
+                
                 except Exception as e:
-                    log(device, f"[ERROR] Error saat proses event: {e}")
+                    log(device, f"Terjadi error tak terduga saat proses event: {e}", level="ERROR")
                     set_device_status(ip, "error")
+                    LAST_KNOWN_STATUS[ip] = 'error'
+            
             time.sleep(POLL_INTERVAL)
+    
     except KeyboardInterrupt:
-        print("\n[INFO] Sinkronisasi dihentikan oleh pengguna.")
+        log_system("Sinkronisasi dihentikan oleh pengguna.")
     except Exception as e:
-        print(f"\n[FATAL] FATAL ERROR: {e}")
+        log_system(f"FATAL ERROR: {e}", level="ERROR")
 
 # --- ENTRY POINT ---
 if __name__ == "__main__":
     main_sync()
+
