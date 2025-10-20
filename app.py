@@ -10,7 +10,7 @@ from flask_cors import CORS
 import database as db
 
 app = Flask(__name__)
-app.secret_key = 'ganti-dengan-kunci-rahasia-yang-sangat-acak-dan-panjang'
+app.secret_key = os.environ.get('SECRET_KEY', 'ganti-dengan-kunci-rahasia-yang-sangat-acak-dan-panjang')
 app.config['JSON_SORT_KEYS'] = False
 cors = CORS(app, resources={r"/api/*": {"origins": "*"}})
 
@@ -24,7 +24,6 @@ class User(UserMixin):
         self.id, self.username, self.password_hash = id, username, generate_password_hash(password)
     def check_password(self, password): return check_password_hash(self.password_hash, password)
 
-# Mengambil kredensial dari environment variables dengan nilai default
 ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'bukalah123')
 
@@ -61,15 +60,16 @@ def logout():
 def index():
     """Route untuk dashboard utama."""
     stats = db.get_dashboard_stats()
-    recent_events = db.get_recent_events(limit=7)
-    
-    # PERBAIKAN: Mengambil devices_status untuk ditampilkan di dasbor
     devices_status = db.get_devices_status()
+    
+    # PERUBAHAN: Jumlah event terbaru disesuaikan dengan jumlah perangkat aktif
+    event_limit = len(devices_status)
+    recent_events = db.get_recent_events(limit=event_limit)
     
     return render_template('dashboard.html', 
                            stats=stats, 
                            recent_events=recent_events,
-                           devices_status=devices_status) # Variabel yang benar dikirim
+                           devices_status=devices_status)
 
 @app.route('/events')
 @login_required
@@ -89,7 +89,7 @@ def events():
 @login_required
 def devices():
     """Route untuk halaman Kelola Perangkat."""
-    all_devices = db.get_all_devices()
+    all_devices = db.get_all_devices_for_ui()
     return render_template('devices.html', devices=all_devices)
     
 # --- ROUTE CRUD & API ---
@@ -126,6 +126,16 @@ def delete_device():
     else:
         flash('Gagal menghapus perangkat. IP tidak ditemukan.', 'danger')
     return redirect(url_for('devices'))
+
+@app.route('/devices/toggle_active/<string:ip>', methods=['POST'])
+@login_required
+def toggle_active(ip):
+    """Endpoint untuk mengaktifkan/menonaktifkan perangkat."""
+    if db.toggle_device_active_state(ip):
+        flash('Status perangkat berhasil diubah.', 'success')
+    else:
+        flash('Gagal mengubah status perangkat.', 'danger')
+    return redirect(url_for('devices'))
     
 @app.route('/api/event/<int:event_id>')
 @login_required
@@ -133,7 +143,6 @@ def api_get_event(event_id):
     """API endpoint untuk mendapatkan detail satu event."""
     event = db.get_event_by_id(event_id)
     if event:
-        # Menentukan URL gambar, prioritaskan gambar lokal
         event['imageUrl'] = url_for('static', filename=event['localImagePath'], _external=True) if event.get('localImagePath') else event.get('pictureURL')
         if 'localImagePath' in event: del event['localImagePath']
         if 'pictureURL' in event: del event['pictureURL']
@@ -144,7 +153,6 @@ def ping_device(ip):
     """Fungsi untuk melakukan ping ke IP address."""
     param = "-n 1 -w 1000" if platform.system().lower() == "windows" else "-c 1 -W 1"
     cmd = f"ping {param} {ip}"
-    # Mengarahkan output ke NUL (Windows) atau /dev/null (Linux/macOS)
     redirect_out = " > NUL 2>&1" if platform.system().lower()=="windows" else " > /dev/null 2>&1"
     return os.system(cmd + redirect_out) == 0
     
@@ -175,7 +183,6 @@ def api_get_logs_by_date(date_string):
     ip_filter = request.args.get('ip', None)
     events = db.get_events_by_date(date_string, location=location_filter, ip=ip_filter)
     
-    # Membersihkan dan menyusun data sebelum dikirim sebagai JSON
     cleaned_events = []
     for event in events:
         image_url = url_for('static', filename=event['localImagePath'], _external=True) if event.get('localImagePath') else event.get('pictureURL')
@@ -194,6 +201,6 @@ def api_get_logs_by_date(date_string):
 
 # --- ENTRY POINT ---
 if __name__ == '__main__':
-    # Memastikan tabel ada saat aplikasi pertama kali dijalankan
     db.init_db()
     app.run(debug=True, host='0.0.0.0')
+

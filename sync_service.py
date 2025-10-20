@@ -20,7 +20,6 @@ import database as db
 # --- SETUP LOGGING PROFESIONAL ---
 logger = logging.getLogger("SyncServiceLogger")
 logger.setLevel(logging.INFO)
-# Hapus handler default jika ada untuk menghindari duplikasi
 if logger.hasHandlers():
     logger.handlers.clear()
     
@@ -96,8 +95,9 @@ def get_last_sync_time(ip):
         dt = row[0]
         if isinstance(dt, datetime.datetime):
             return dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
-    # PERUBAHAN: Mengubah periode catch-up menjadi 3 hari untuk perangkat baru.
-    dt = datetime.datetime.now() - datetime.timedelta(days=3)
+            
+    # PERUBAHAN: Jika perangkat baru, mulai dari jam 00:00 hari ini.
+    dt = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     return dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
 
 def set_device_status(ip, status):
@@ -288,15 +288,13 @@ def save_event(event, device):
     eventId, device_name, pictureURL = event.get("serialNo"), device_label(device), event.get("pictureURL")
     
     if not pictureURL:
-        return False # Dilewati tanpa log untuk menjaga kebersihan
+        return False
         
     name = event.get("name") or "unknown"
 
-    # Periksa apakah event sudah ada (duplikat) secara diam-diam
     if event_exists(eventId, device_name):
         return False
         
-    # Jika lolos semua filter awal, baru catat log pemrosesan
     log(device, f"Memproses event baru (ID: {eventId}) untuk '{name}'...")
         
     try:

@@ -33,36 +33,58 @@ def init_db():
             username VARCHAR(255) NULL,
             password VARCHAR(255) NULL,
             status VARCHAR(20) DEFAULT 'offline',
-            lastSync DATETIME NULL
+            lastSync DATETIME NULL,
+            is_active BOOLEAN DEFAULT TRUE
         )
     """)
-    # Menambahkan kolom username dan password jika belum ada (untuk migrasi)
+    # Migrasi: Tambahkan kolom yang mungkin belum ada
     try:
         c.execute("ALTER TABLE devices ADD COLUMN username VARCHAR(255) NULL")
         c.execute("ALTER TABLE devices ADD COLUMN password VARCHAR(255) NULL")
-    except mysql.connector.Error as err:
-        # Abaikan error jika kolom sudah ada
-        if err.errno != 1060: # Error code for 'Duplicate column name'
-            raise
+    except mysql.connector.Error: pass
+    try:
+        c.execute("ALTER TABLE devices ADD COLUMN is_active BOOLEAN DEFAULT TRUE")
+    except mysql.connector.Error: pass
 
     c.close()
     conn.close()
 
 def get_all_devices():
-    """Mengambil semua perangkat dari database."""
+    """Mengambil SEMUA PERANGKAT AKTIF untuk layanan sinkronisasi."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
-    c.execute("SELECT * FROM devices ORDER BY name")
+    c.execute("SELECT * FROM devices WHERE is_active = TRUE ORDER BY name")
     rows = c.fetchall()
     c.close()
     conn.close()
     return rows
 
+def get_all_devices_for_ui():
+    """Mengambil SEMUA perangkat (aktif dan nonaktif) untuk ditampilkan di UI."""
+    conn = get_db()
+    c = conn.cursor(dictionary=True)
+    c.execute("SELECT * FROM devices ORDER BY ip")
+    rows = c.fetchall()
+    c.close()
+    conn.close()
+    return rows
+
+def toggle_device_active_state(ip):
+    """Mengubah status aktif/nonaktif sebuah perangkat."""
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("UPDATE devices SET is_active = NOT is_active WHERE ip = %s", (ip,))
+        return c.rowcount > 0
+    finally:
+        c.close()
+        conn.close()
+
 def get_all_unique_locations():
     """Mengambil semua lokasi unik dari tabel devices untuk filter dropdown."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
-    c.execute("SELECT DISTINCT location FROM devices WHERE location IS NOT NULL AND location != '' ORDER BY location")
+    c.execute("SELECT DISTINCT location FROM devices WHERE location IS NOT NULL AND location != '' AND is_active = TRUE ORDER BY location")
     locations = c.fetchall()
     c.close()
     conn.close()
@@ -82,6 +104,8 @@ def get_events(**filters):
     """
     base_sql = "FROM events JOIN devices ON events.deviceName = devices.name"
     where_clauses, values = [], []
+
+    where_clauses.append("devices.is_active = TRUE")
 
     if filters.get('device'):
         where_clauses.append("events.deviceName = %s")
@@ -139,7 +163,7 @@ def get_events_by_date(target_date, location=None, ip=None):
             events.name, events.employeeId, events.deviceName, devices.ip, devices.location,
             events.eventDesc, events.syncType, events.apiStatus, events.pictureURL, events.localImagePath
         FROM events JOIN devices ON events.deviceName = devices.name
-        WHERE events.date = %s
+        WHERE events.date = %s AND devices.is_active = TRUE
     """
     values = [target_date]
     if location:
@@ -215,7 +239,7 @@ def get_devices_status():
     conn = get_db()
     c = conn.cursor(dictionary=True)
     # Menambahkan 'name' dan 'location' ke query
-    c.execute("SELECT ip, name, location, status, lastSync FROM devices ORDER BY name")
+    c.execute("SELECT ip, name, location, status, lastSync FROM devices WHERE is_active = TRUE ORDER BY name")
     rows = c.fetchall()
     c.close()
     conn.close()
@@ -231,15 +255,14 @@ def get_dashboard_stats():
     conn = get_db()
     c = conn.cursor(dictionary=True)
     
-    c.execute("SELECT COUNT(*) as total_devices FROM devices")
+    c.execute("SELECT COUNT(*) as total_devices FROM devices WHERE is_active = TRUE")
     total_devices = c.fetchone()['total_devices']
     
-    c.execute("SELECT COUNT(*) as online_devices FROM devices WHERE status = 'online'")
+    c.execute("SELECT COUNT(*) as online_devices FROM devices WHERE status = 'online' AND is_active = TRUE")
     online_devices = c.fetchone()['online_devices']
     
     today_str = date.today().strftime('%Y-%m-%d')
     
-    # Menggunakan fungsi get_events yang sama persis dengan halaman log untuk konsistensi
     filters_for_today = {'start_date': today_str, 'end_date': today_str}
     events_today_list = get_events(**filters_for_today)
     
@@ -266,6 +289,7 @@ def get_recent_events(limit=5):
             events.date, events.time, events.eventDesc
         FROM events 
         JOIN devices ON events.deviceName = devices.name
+        WHERE devices.is_active = TRUE
         ORDER BY events.id DESC
         LIMIT %s
     """
