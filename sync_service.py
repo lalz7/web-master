@@ -10,6 +10,8 @@ import base64
 import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 # Impor konfigurasi dan modul database kustom
 from config import *
@@ -18,6 +20,10 @@ import database as db
 # --- SETUP LOGGING PROFESIONAL ---
 logger = logging.getLogger("SyncServiceLogger")
 logger.setLevel(logging.INFO)
+# Hapus handler default jika ada untuk menghindari duplikasi
+if logger.hasHandlers():
+    logger.handlers.clear()
+    
 formatter = logging.Formatter('%(message)s')
 
 # Handler untuk konsol
@@ -40,10 +46,11 @@ if SERVICE_LOG_DIR:
 # --- AKHIR SETUP LOGGING ---
 
 
-# --- Runtime Counters (Jangan Diubah) ---
+# --- Variabel Global & Kunci Thread ---
 FAIL_COUNT = {}
 SUSPEND_UNTIL = {}
-LAST_KNOWN_STATUS = {} # Untuk melacak status koneksi dan menghindari log berulang
+LAST_KNOWN_STATUS = {} 
+DATA_LOCK = threading.Lock() # Kunci untuk melindungi akses ke variabel global di atas
 # ----------------------------------------
 
 # --- EVENT_MAP hanya berisi satu event yang dianggap valid ---
@@ -89,7 +96,8 @@ def get_last_sync_time(ip):
         dt = row[0]
         if isinstance(dt, datetime.datetime):
             return dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
-    dt = datetime.datetime.now() - datetime.timedelta(days=30)
+    # PERUBAHAN: Mengubah periode catch-up menjadi 3 hari untuk perangkat baru.
+    dt = datetime.datetime.now() - datetime.timedelta(days=3)
     return dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
 
 def set_device_status(ip, status):
@@ -105,7 +113,7 @@ def update_api_status(db_id, status):
     try:
         c.execute("UPDATE events SET apiStatus=%s WHERE id=%s", (status, db_id))
     except Exception as e:
-        log_system("Error updating API status: {e}", level="ERROR")
+        log_system(f"Error updating API status: {e}", level="ERROR")
     finally:
         c.close()
         conn.close()
@@ -278,8 +286,18 @@ def save_event(event, device):
     password = device.get("password")
     
     eventId, device_name, pictureURL = event.get("serialNo"), device_label(device), event.get("pictureURL")
-    if not pictureURL or event_exists(eventId, device_name):
+    
+    if not pictureURL:
+        return False # Dilewati tanpa log untuk menjaga kebersihan
+        
+    name = event.get("name") or "unknown"
+
+    # Periksa apakah event sudah ada (duplikat) secara diam-diam
+    if event_exists(eventId, device_name):
         return False
+        
+    # Jika lolos semua filter awal, baru catat log pemrosesan
+    log(device, f"Memproses event baru (ID: {eventId}) untuk '{name}'...")
         
     try:
         dt = datetime.datetime.strptime(event.get("time")[:19], "%Y-%m-%dT%H:%M:%S")
@@ -288,15 +306,12 @@ def save_event(event, device):
         dt, date_value, time_value = None, "0000-00-00", "00:00:00"
     
     employee_id = int(event["employeeNoString"]) if event.get("employeeNoString", "").isdigit() else None
-    name = event.get("name") or "unknown"
     
     event_desc = get_event_desc(event)
     is_valid_event = (event_desc == "Face recognized")
     
-    log(device, f"Memproses event baru (ID: {eventId}) untuk '{name}'...")
-    
     if not is_valid_event:
-        log(device, f"Event '{event_desc}' tidak valid. Akan ditandai sebagai gagal.")
+        log(device, f"Dilewati: Event '{event_desc}' tidak valid (ID: {eventId}).")
         
     initial_api_status = 'pending' if is_valid_event else 'failed'
 
@@ -317,9 +332,8 @@ def save_event(event, device):
                 absolute_file_path = os.path.join(absolute_folder, file_name)
                 with open(absolute_file_path, "wb") as f:
                     f.write(r_img.content)
-                log(device, f"Gambar tersimpan di: {absolute_file_path}")
         except Exception as e:
-            log(device, f"Error download gambar: {e}", level="WARN")
+            log(device, f"Error download gambar (ID: {eventId}): {e}", level="WARN")
 
     sync_type = "realtime" if dt and abs((datetime.datetime.now() - dt).total_seconds()) <= 100 else "catch-up"
     conn, c, db_event_id = db.get_db(), None, None
@@ -330,6 +344,8 @@ def save_event(event, device):
         c.execute(sql, values)
         db_event_id = c.lastrowid
         
+        log(device, f"Berhasil menyimpan event (ID: {eventId}) ke database.")
+
         if db_event_id and is_valid_event:
             api_data = {
                 "deviceName": device_name, "employeeId": employee_id, "pictureURL": pictureURL, 
@@ -340,21 +356,90 @@ def save_event(event, device):
     except mysql.connector.IntegrityError: 
         return False
     except Exception as e: 
-        log(device, f"DB error: {e}", level="ERROR")
+        log(device, f"DB error (ID: {eventId}): {e}", level="ERROR")
         return False
     finally:
         if c: c.close()
         conn.close()
 
-# --- PING & MAIN LOOP ---
+# --- PING & FUNGSI PEKERJA (WORKER) ---
 def ping_device_os(ip):
     param = "-n 1 -w 1000" if platform.system().lower() == "windows" else "-c 1 -W 1"
     cmd = f"ping {param} {ip}"
     return os.system(cmd + " > NUL 2>&1" if platform.system().lower()=="windows" else cmd + " > /dev/null 2>&1") == 0
 
+def process_device(device):
+    """Fungsi ini berisi logika untuk memproses satu perangkat. Akan dijalankan oleh setiap thread."""
+    ip = device.get("ip")
+    
+    if not device.get("username") or not device.get("password"):
+        log(device, "Username atau Password belum diatur. Dilewati.", level="WARN")
+        return
+
+    with DATA_LOCK:
+        if ip in SUSPEND_UNTIL and time.time() < SUSPEND_UNTIL[ip]:
+            return
+
+    if not ping_device_os(ip):
+        with DATA_LOCK:
+            fail_count = FAIL_COUNT.get(ip, 0) + 1
+            FAIL_COUNT[ip] = fail_count
+            
+            if fail_count >= PING_MAX_FAIL:
+                if LAST_KNOWN_STATUS.get(ip) != 'offline':
+                    log(device, f"Koneksi terputus. Disuspend selama {SUSPEND_SECONDS // 60} menit.", level="WARN")
+                    set_device_status(ip, "offline")
+                    LAST_KNOWN_STATUS[ip] = 'offline'
+                SUSPEND_UNTIL[ip] = time.time() + SUSPEND_SECONDS
+            else:
+                log(device, f"Ping gagal, percobaan ke-{fail_count} dari {PING_MAX_FAIL}.", level="WARN")
+        return
+
+    with DATA_LOCK:
+        if LAST_KNOWN_STATUS.get(ip) != 'online':
+            log_message = "Terhubung kembali." if LAST_KNOWN_STATUS.get(ip) else "Terhubung, memulai sinkronisasi event..."
+            log(device, log_message, level="OK" if LAST_KNOWN_STATUS.get(ip) else "INFO")
+            set_device_status(ip, "online")
+            LAST_KNOWN_STATUS[ip] = 'online'
+        
+        FAIL_COUNT[ip] = 0
+        SUSPEND_UNTIL.pop(ip, None)
+
+    try:
+        last_sync = get_last_sync_time(ip)
+        now_time = iso8601_now()
+        
+        events = get_events_from_device(device, last_sync, now_time)
+        
+        if not events:
+            return
+        
+        events.sort(key=lambda x: int(x.get("serialNo") or 0))
+        
+        newest_time = last_sync
+        saved_count = 0
+        
+        for e in events:
+            if save_event(e, device):
+                newest_time = e.get("time", newest_time)
+                saved_count += 1
+        
+        if saved_count > 0:
+            log(device, f"Selesai, total {saved_count} event baru berhasil diproses.")
+        
+        if newest_time != last_sync:
+            set_last_sync_time(ip, newest_time)
+    
+    except Exception as e:
+        with DATA_LOCK:
+            LAST_KNOWN_STATUS[ip] = 'error'
+        log(device, f"Terjadi error tak terduga: {e}", level="ERROR")
+        set_device_status(ip, "error")
+
+# --- MAIN LOOP ---
 def main_sync():
     db.init_db()
-    log_system("Memulai Sinkronisasi Event Hikvision...")
+    log_system("Memulai Sinkronisasi Event Hikvision (Mode Multi-Thread)...")
     try:
         while True:
             devices = db.get_all_devices()
@@ -362,64 +447,10 @@ def main_sync():
                 log_system("Tidak ada device yang terdaftar. Menunggu 15 detik...")
                 time.sleep(15)
                 continue
-            for device in devices:
-                ip = device.get("ip")
-                
-                if not device.get("username") or not device.get("password"):
-                    log(device, "Username atau Password belum diatur. Dilewati.", level="WARN")
-                    continue
 
-                if ip in SUSPEND_UNTIL and time.time() < SUSPEND_UNTIL[ip]: continue
-                
-                if not ping_device_os(ip):
-                    FAIL_COUNT[ip] = FAIL_COUNT.get(ip, 0) + 1
-                    if FAIL_COUNT[ip] >= PING_MAX_FAIL:
-                        if LAST_KNOWN_STATUS.get(ip) != 'offline':
-                            log(device, f"Koneksi terputus. Disuspend selama {SUSPEND_SECONDS // 60} menit.", level="WARN")
-                            set_device_status(ip, "offline")
-                            LAST_KNOWN_STATUS[ip] = 'offline'
-                        SUSPEND_UNTIL[ip] = time.time() + SUSPEND_SECONDS
-                    else:
-                        log(device, f"Ping gagal, percobaan ke-{FAIL_COUNT[ip]} dari {PING_MAX_FAIL}.", level="WARN")
-                    continue
-                
-                # --- LOGIKA LOGGING CERDAS ---
-                # Hanya tampilkan log jika status berubah menjadi online
-                if LAST_KNOWN_STATUS.get(ip) != 'online':
-                    log_message = "Terhubung kembali." if LAST_KNOWN_STATUS.get(ip) else "Terhubung, memulai sinkronisasi event..."
-                    log(device, log_message, level="OK" if LAST_KNOWN_STATUS.get(ip) else "INFO")
-                    set_device_status(ip, "online")
-                    LAST_KNOWN_STATUS[ip] = 'online'
-                # --- AKHIR LOGIKA ---
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                executor.map(process_device, devices)
 
-                # Reset fail counts setelah ping berhasil
-                FAIL_COUNT[ip] = 0
-                SUSPEND_UNTIL.pop(ip, None)
-
-                try:
-                    last_sync = get_last_sync_time(ip)
-                    now_time = iso8601_now()
-                    
-                    events = get_events_from_device(device, last_sync, now_time)
-                    
-                    if not events: continue
-                    
-                    events.sort(key=lambda x: int(x.get("serialNo") or 0))
-                    newest_time, saved_count = last_sync, 0
-                    
-                    for e in events:
-                        if save_event(e, device):
-                            newest_time = e.get("time", newest_time)
-                            saved_count += 1
-                    
-                    if saved_count > 0: log(device, f"Total {saved_count} event baru berhasil diproses.")
-                    if newest_time != last_sync: set_last_sync_time(ip, newest_time)
-                
-                except Exception as e:
-                    log(device, f"Terjadi error tak terduga saat proses event: {e}", level="ERROR")
-                    set_device_status(ip, "error")
-                    LAST_KNOWN_STATUS[ip] = 'error'
-            
             time.sleep(POLL_INTERVAL)
     
     except KeyboardInterrupt:
