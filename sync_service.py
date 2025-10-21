@@ -12,6 +12,7 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 import threading
 from concurrent.futures import ThreadPoolExecutor
+import random
 
 # Impor konfigurasi dan modul database kustom
 from config import *
@@ -20,6 +21,7 @@ import database as db
 # --- SETUP LOGGING PROFESIONAL ---
 logger = logging.getLogger("SyncServiceLogger")
 logger.setLevel(logging.INFO)
+# Hapus handler default jika ada untuk menghindari duplikasi
 if logger.hasHandlers():
     logger.handlers.clear()
     
@@ -69,12 +71,17 @@ def sanitize_name(name):
 def device_label(device):
     """Mengembalikan nama device, atau IP jika nama kosong."""
     return device.get("name") or device.get("ip")
+
+def parse_iso_time(time_str):
+    """Mengubah string ISO 8601 menjadi objek datetime."""
+    # Menghilangkan informasi timezone untuk perbandingan
+    return datetime.datetime.fromisoformat(time_str.replace(TIMEZONE, ''))
 # ----------------------------------
 
 # --- FUNGSI DATABASE (Spesifik untuk service ini) ---
 def set_last_sync_time(ip, time_iso_str):
     try:
-        dt = datetime.datetime.strptime(time_iso_str[:19], "%Y-%m-%dT%H:%M:%S")
+        dt = parse_iso_time(time_iso_str)
     except Exception:
         dt = datetime.datetime.now()
     
@@ -274,11 +281,10 @@ def get_events_from_device(device, start_time, end_time):
     return [] 
 
 def get_event_desc(event):
-    """
-    Mengembalikan deskripsi event. Jika event dikenali, kembalikan namanya.
-    Jika tidak, kembalikan 'Event Tidak Dikenali' secara standar.
-    """
-    return EVENT_MAP.get((event.get("major"), event.get("minor")), "Event Tidak Dikenali")
+    """Returns the event description. If unrecognized, specifies the event codes."""
+    major = event.get("major")
+    minor = event.get("minor")
+    return EVENT_MAP.get((major, minor), f"Unrecognized Event (Major: {major}, Minor: {minor})")
 
 def save_event(event, device):
     """Menyimpan event, kini menerima seluruh objek device."""
@@ -290,7 +296,11 @@ def save_event(event, device):
     if not pictureURL:
         return False
         
-    name = event.get("name") or "unknown"
+    name_from_device = event.get("name")
+    if not name_from_device or name_from_device.lower() == 'unknown':
+        name = "Stranger"
+    else:
+        name = name_from_device
 
     if event_exists(eventId, device_name):
         return False
@@ -309,7 +319,7 @@ def save_event(event, device):
     is_valid_event = (event_desc == "Face recognized")
     
     if not is_valid_event:
-        log(device, f"Dilewati: Event '{event_desc}' tidak valid (ID: {eventId}).")
+        log(device, f"Skipped: Event '{event_desc}' is not valid (ID: {eventId}).")
         
     initial_api_status = 'pending' if is_valid_event else 'failed'
 
@@ -324,7 +334,7 @@ def save_event(event, device):
             if not os.path.exists(absolute_folder): os.makedirs(absolute_folder, exist_ok=True)
             r_img = requests.get(pictureURL, auth=HTTPDigestAuth(user, password), timeout=REQUEST_TIMEOUT)
             if r_img.status_code == 200:
-                safe_name = sanitize_name(name) if name else "unknown"
+                safe_name = sanitize_name(name) if name else "Stranger"
                 file_name = f"{safe_name}-{eventId}.jpg"
                 local_image_path = os.path.join(relative_folder, file_name).replace("\\", "/")
                 absolute_file_path = os.path.join(absolute_folder, file_name)
@@ -368,6 +378,9 @@ def ping_device_os(ip):
 
 def process_device(device):
     """Fungsi ini berisi logika untuk memproses satu perangkat. Akan dijalankan oleh setiap thread."""
+    
+    time.sleep(random.uniform(0, 3))
+
     ip = device.get("ip")
     
     if not device.get("username") or not device.get("password"):
@@ -404,17 +417,46 @@ def process_device(device):
         SUSPEND_UNTIL.pop(ip, None)
 
     try:
-        last_sync = get_last_sync_time(ip)
-        now_time = iso8601_now()
+        last_sync_str = get_last_sync_time(ip)
+        now_time_str = iso8601_now()
         
-        events = get_events_from_device(device, last_sync, now_time)
+        start_dt = parse_iso_time(last_sync_str)
+        end_dt = parse_iso_time(now_time_str)
         
+        time_diff_seconds = (end_dt - start_dt).total_seconds()
+        
+        CATCH_UP_CHUNK_MINUTES = 10
+        BIG_CATCHUP_THRESHOLD_SECONDS = 3600 # 1 jam
+
+        if time_diff_seconds > BIG_CATCHUP_THRESHOLD_SECONDS:
+            
+            current_start_dt = start_dt
+            all_events = []
+            
+            while current_start_dt < end_dt:
+                current_end_dt = current_start_dt + datetime.timedelta(minutes=CATCH_UP_CHUNK_MINUTES)
+                if current_end_dt > end_dt:
+                    current_end_dt = end_dt
+                
+                start_chunk_str = current_start_dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
+                end_chunk_str = current_end_dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
+                
+                chunk_events = get_events_from_device(device, start_chunk_str, end_chunk_str)
+                if chunk_events:
+                    all_events.extend(chunk_events)
+                
+                current_start_dt = current_end_dt
+            
+            events = all_events
+        else:
+            events = get_events_from_device(device, last_sync_str, now_time_str)
+
         if not events:
             return
         
         events.sort(key=lambda x: int(x.get("serialNo") or 0))
         
-        newest_time = last_sync
+        newest_time = last_sync_str
         saved_count = 0
         
         for e in events:
@@ -425,7 +467,7 @@ def process_device(device):
         if saved_count > 0:
             log(device, f"Selesai, total {saved_count} event baru berhasil diproses.")
         
-        if newest_time != last_sync:
+        if newest_time != last_sync_str:
             set_last_sync_time(ip, newest_time)
     
     except Exception as e:
@@ -446,7 +488,8 @@ def main_sync():
                 time.sleep(15)
                 continue
 
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            num_workers = len(devices)
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 executor.map(process_device, devices)
 
             time.sleep(POLL_INTERVAL)

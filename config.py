@@ -19,5 +19,3 @@ SUSPEND_SECONDS = 300
 
 # Batas waktu dalam detik untuk menunggu respons dari perangkat
 REQUEST_TIMEOUT = 30
-
-MAX_WORKERS = 5
