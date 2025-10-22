@@ -5,9 +5,10 @@ DB_USER = "izlal"
 DB_PASS = "1sampai8"
 DB_NAME = "web_master"
 
-# Pengaturan Polling
+# Pengaturan Polling (Kombinasi Responsif untuk Jam Sibuk)
 POLL_INTERVAL = 2
-BATCH_MAX_RESULTS = 100
+BATCH_MAX_RESULTS = 20 # Diperkecil agar setiap batch cepat diproses
+
 TIMEZONE = "+07:00"
 IMG_DIR = "static/images"
 LOG_DIR = "payload_logs"
