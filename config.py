@@ -24,17 +24,17 @@ REQUEST_TIMEOUT = 30
 # --- PEMETAAN EVENT HIKVISION ---
 EVENT_MAP = {
     # Authentication Success
-    (5, 75): "Face recognized",
+    (5, 75): "Face Recognized",
 
     # Authentication Failure
-    (5, 80): "Face recognition failed",
-    (5, 76): "Stranger face recognition failed",
-    (5, 18): "Card & face authentication failed",
-    (5, 43): "Card not registered",
+    (5, 80): "Face Recognition Failed",
+    (5, 76): "Stranger Face Recognition Failed",
+    (5, 18): "Card & Face Authentication Failed",
+    (5, 43): "Card Not Registered",
 
     # Alarms & Status
-    (5, 37): "Door opened",
-    (5, 41): "Door held open too long",
-    (1, 10): "Door not closed",
-    (1, 7): "Device tamper alarm",
+    (5, 37): "Door Opened",
+    (5, 41): "Door Held Open Too Long",
+    (1, 10): "Door Not Closed",
+    (1, 7): "Device Tamper Alarm",
 }

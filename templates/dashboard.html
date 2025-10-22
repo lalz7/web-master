@@ -3,7 +3,6 @@
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
-<!-- Penambahan CSS Kustom untuk Peningkatan Visual (Opsi A) -->
 <style>
     .card-hover:hover {
         transform: translateY(-5px);
@@ -32,16 +31,13 @@
     }
 </style>
 
-<!-- Header dengan tanggal dan timestamp -->
 <div class="d-flex justify-content-between align-items-center mb-4">
     <small id="current-date" class="text-muted">Memuat tanggal...</small>
     <small id="last-updated" class="text-muted" title="Status perangkat diperbarui secara otomatis">Memuat...</small>
 </div>
 
 
-<!-- Kartu Statistik Utama -->
 <div class="row g-4 mb-4">
-    <!-- Total Perangkat -->
     <div class="col-md-6 col-lg-3">
         <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-primary">
             <div class="card-body">
@@ -55,7 +51,6 @@
             </div>
         </div>
     </div>
-    <!-- Perangkat Online -->
     <div class="col-md-6 col-lg-3">
         <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-success">
             <div class="card-body">
@@ -69,7 +64,6 @@
             </div>
         </div>
     </div>
-    <!-- Event Hari Ini -->
     <div class="col-md-6 col-lg-3">
         <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-info">
             <div class="card-body">
@@ -83,7 +77,6 @@
             </div>
         </div>
     </div>
-    <!-- API Gagal Hari Ini -->
     <div class="col-md-6 col-lg-3">
         <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-danger">
             <div class="card-body">
@@ -99,9 +92,7 @@
     </div>
 </div>
 
-<!-- Tampilan Ringkasan dengan format List Group (Opsi A) -->
 <div class="row g-4">
-    <!-- Kolom Event Terbaru -->
     <div class="col-lg-7">
         <div class="card h-100 shadow-sm border-0">
             <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
@@ -114,11 +105,11 @@
                     <a href="#" class="list-group-item list-group-item-action py-3" data-event-id="{{ event.id }}" data-bs-toggle="modal" data-bs-target="#eventDetailModal">
                         <div class="d-flex w-100 align-items-center">
                             <div class="flex-shrink-0 me-3">
-                                <div class="activity-icon 
+                                <div class="activity-icon
                                     {% if event.apiStatus == 'success' %} bg-success-subtle text-success-emphasis
                                     {% elif event.apiStatus == 'failed' %} bg-danger-subtle text-danger-emphasis
                                     {% else %} bg-secondary-subtle text-secondary-emphasis {% endif %}">
-                                    <i class="fas 
+                                    <i class="fas
                                         {% if event.apiStatus == 'success' %} fa-check
                                         {% elif event.apiStatus == 'failed' %} fa-exclamation
                                         {% else %} fa-hourglass-start {% endif %}">
@@ -129,8 +120,13 @@
                                 <div class="fw-bold">{{ event.name or 'N/A' }}</div>
                                 <small class="text-muted">{{ event.location or 'Tanpa Lokasi' }} &bull; {{ event.deviceName }}</small>
                             </div>
-                            <div class="flex-shrink-0 text-end">
-                                <small class="text-muted">{{ event.time }}</small>
+                            <div class="flex-shrink-0 d-flex justify-content-end align-items-center" style="min-width: 130px;">
+                                {% if event.syncType == 'realtime' %}
+                                    <span class="badge rounded-pill bg-primary-subtle text-primary-emphasis">realtime</span>
+                                {% else %}
+                                    <span class="badge rounded-pill bg-info-subtle text-info-emphasis">catch-up</span>
+                                {% endif %}
+                                <small class="text-muted ms-2" style="width: 55px; text-align: right;">{{ event.time }}</small>
                             </div>
                         </div>
                     </a>
@@ -143,8 +139,7 @@
             </div>
         </div>
     </div>
-    
-    <!-- Kolom Status Perangkat -->
+
     <div class="col-lg-5">
         <div class="card h-100 shadow-sm border-0">
             <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
@@ -176,7 +171,6 @@
     </div>
 </div>
 
-<!-- Modal Detail Event (Tidak ada perubahan) -->
 <div class="modal fade" id="eventDetailModal" tabindex="-1" aria-labelledby="eventDetailModalLabel" aria-hidden="true">
   <div class="modal-dialog" id="event-modal-dialog">
     <div class="modal-content">
@@ -222,14 +216,14 @@ $(document).ready(function() {
         });
         $('#last-updated').text('Status diperbarui pada ' + timeString + ' WIB');
     }
-    
+
     function setCurrentDate() {
         const now = new Date();
         const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
         const dateString = now.toLocaleDateString('id-ID', options);
         $('#current-date').text(dateString);
     }
-    
+
     function pollDeviceStatus() {
         $.ajax({
             url: '/api/devices_status',
@@ -240,9 +234,9 @@ $(document).ready(function() {
                     const statusBadge = $('#status-' + device.ip.replace(/\./g, '-'));
                     if (statusBadge.length) {
                         let newStatusText = device.status;
-                        let newBadgeClass = (device.status === 'online') ? 'bg-success-subtle text-success-emphasis' : 
+                        let newBadgeClass = (device.status === 'online') ? 'bg-success-subtle text-success-emphasis' :
                                             (device.status === 'offline') ? 'bg-secondary-subtle text-secondary-emphasis' : 'bg-danger-subtle text-danger-emphasis';
-                        
+
                         if (statusBadge.text().trim() !== newStatusText) {
                             statusBadge.removeClass('bg-success-subtle text-success-emphasis bg-secondary-subtle text-secondary-emphasis bg-danger-subtle text-danger-emphasis').addClass(newBadgeClass).text(newStatusText);
                         }
@@ -268,7 +262,7 @@ $(document).ready(function() {
         const spinner = document.getElementById('modal-spinner');
         const content = document.getElementById('modal-content-area');
         const imageElement = document.getElementById('event-image');
-        
+
         eventDetailModal.addEventListener('show.bs.modal', function (event) {
             const row = event.relatedTarget;
             const eventId = row.dataset.eventId;
@@ -312,4 +306,3 @@ $(document).ready(function() {
 });
 </script>
 {% endblock %}
-

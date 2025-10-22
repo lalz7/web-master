@@ -3,7 +3,6 @@
 {% block title %}Kelola Perangkat{% endblock %}
 
 {% block content %}
-<!-- CSS untuk animasi feedback saat status berubah -->
 <style>
     @keyframes flash-green {
       0%, 100% { background-color: #198754; box-shadow: none; }
@@ -51,7 +50,7 @@
                         <td data-ip-sync="{{ device.ip }}">{{ device.lastSync.strftime('%d-%m-%Y %H:%M:%S') if device.lastSync else 'Belum pernah' }}</td>
                         <td>
                             {% if not device.is_active %}
-                                <span class="badge bg-secondary">Nonaktif</span>
+                                <span class="badge bg-secondary">nonaktif</span>
                             {% else %}
                                 <span id="status-{{ device.ip.replace('.', '-') }}" class="badge {% if device.status == 'online' %}bg-success{% elif device.status == 'offline' %}bg-secondary{% elif device.status == 'error' %}bg-danger{% else %}bg-warning text-dark{% endif %}">
                                     {{ device.status }}
@@ -84,7 +83,6 @@
     </div>
 </div>
 
-<!-- Modal untuk Tambah Perangkat Baru -->
 <div class="modal fade" id="addDeviceModal" tabindex="-1" aria-labelledby="addDeviceModalLabel" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -133,7 +131,6 @@
     </div>
 </div>
 
-<!-- Loop untuk membuat Modal Edit untuk SETIAP perangkat -->
 {% for device in devices %}
 <div class="modal fade" id="editModal-{{ device.ip.replace('.', '-') }}" tabindex="-1" aria-labelledby="editModalLabel-{{ device.ip.replace('.', '-') }}" aria-hidden="true">
     <div class="modal-dialog">
@@ -185,12 +182,10 @@
 </div>
 {% endfor %}
 
-<!-- Form Hapus (tersembunyi), digunakan oleh SweetAlert -->
 <form id="deleteForm" method="POST" action=""><input type="hidden" name="ip" id="deleteIp"></form>
 {% endblock %}
 
 {% block scripts %}
-<!-- Memuat library jQuery, DataTables, dan SweetAlert2 -->
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script src="https://cdn.datatables.net/2.0.8/js/dataTables.js"></script>
 <script src="https://cdn.datatables.net/2.0.8/js/dataTables.bootstrap5.js"></script>
@@ -200,17 +195,17 @@
 <script>
 $(document).ready(function() {
     $('#devicesTable').DataTable({
-        "order": [[ 0, "asc" ]], 
+        "order": [[ 4, "desc" ], [ 0, "asc" ]],
         "language": {
             "search": "Cari:",
             "lengthMenu": "Tampilkan _MENU_ entri",
             "info": "Menampilkan _START_ sampai _END_ dari _TOTAL_ entri",
             "paginate": { "next": "Berikutnya", "previous": "Sebelumnya" }
         },
-        "columnDefs": [ { "targets": 'no-sort', "orderable": false } ] 
+        "columnDefs": [ { "targets": 'no-sort', "orderable": false } ]
     });
 
-    const PING_TIMEOUT = 15000; 
+    const PING_TIMEOUT = 15000;
     const fetchWithTimeout = (resource, options = {}) => {
         return Promise.race([
             fetch(resource, options),
@@ -238,13 +233,13 @@ $(document).ready(function() {
                 let finalStatus = data.status === 'online' ? 'online' : 'offline';
                 let finalBadgeClass = finalStatus === 'online' ? 'bg-success flash-success' : 'bg-secondary flash-offline';
                 statusBadge.addClass(finalBadgeClass).text(finalStatus);
-                pollDeviceStatus(); 
-                setTimeout(() => { statusBadge.removeClass('flash-success flash-offline'); }, 1000); 
+                pollDeviceStatus();
+                setTimeout(() => { statusBadge.removeClass('flash-success flash-offline'); }, 1000);
             })
             .catch(error => {
                 console.error('Ping error:', error);
                 statusBadge.removeClass('bg-warning text-dark').addClass('bg-secondary flash-offline').text('offline');
-                pollDeviceStatus(); 
+                pollDeviceStatus();
                 setTimeout(() => { statusBadge.removeClass('flash-offline'); }, 1000);
             })
             .finally(() => {
@@ -254,14 +249,14 @@ $(document).ready(function() {
 
     function pollDeviceStatus() {
         $.ajax({
-            url: '/api/devices_status', 
+            url: '/api/devices_status',
             method: 'GET',
             dataType: 'json',
             success: function(devicesData) {
                 devicesData.forEach(function(device) {
                     const statusBadge = $('#status-' + device.ip.replace(/\./g, '-'));
                     const lastSyncCell = $(`td[data-ip-sync="${device.ip}"]`);
-                    
+
                     if (statusBadge.length && !statusBadge.text().includes('memeriksa')) {
                         let newStatusText = device.status;
                         let newBadgeClass = (device.status === 'online') ? 'bg-success' : 'bg-secondary';
@@ -280,14 +275,14 @@ $(document).ready(function() {
             }
         });
     }
-    setInterval(pollDeviceStatus, 15000); 
+    setInterval(pollDeviceStatus, 15000);
 
     $('#devicesTable').on('click', '.delete-btn', function(e) {
         e.preventDefault();
         const ip = $(this).data('ip');
         const name = $(this).data('name');
         const deleteForm = $('#deleteForm');
-        
+
         Swal.fire({
             title: 'Anda Yakin?',
             text: `Perangkat "${name}" (${ip}) akan dihapus permanen!`,
@@ -307,4 +302,3 @@ $(document).ready(function() {
 });
 </script>
 {% endblock %}
-

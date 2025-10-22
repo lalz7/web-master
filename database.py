@@ -16,8 +16,8 @@ def init_db():
     c.execute("""
         CREATE TABLE IF NOT EXISTS events (
             id BIGINT AUTO_INCREMENT PRIMARY KEY, deviceName VARCHAR(255),
-            eventId BIGINT, employeeId INT NULL, name VARCHAR(255), date VARCHAR(10), 
-            time VARCHAR(8), eventDesc VARCHAR(255), pictureURL VARCHAR(255), 
+            eventId BIGINT, employeeId INT NULL, name VARCHAR(255), date VARCHAR(10),
+            time VARCHAR(8), eventDesc VARCHAR(255), pictureURL VARCHAR(255),
             localImagePath VARCHAR(255) NULL, syncType VARCHAR(20) DEFAULT 'realtime',
             apiStatus VARCHAR(20) DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(eventId, deviceName)
@@ -63,7 +63,7 @@ def get_all_devices_for_ui():
     """Mengambil SEMUA perangkat (aktif dan nonaktif) untuk ditampilkan di UI."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
-    c.execute("SELECT * FROM devices ORDER BY ip")
+    c.execute("SELECT * FROM devices ORDER BY is_active DESC, ip ASC")
     rows = c.fetchall()
     c.close()
     conn.close()
@@ -94,12 +94,12 @@ def get_events(**filters):
     """Mengambil SEMUA event yang cocok dengan filter, TANPA PAGINASI."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
-    
+
     select_clause = """
-        SELECT 
+        SELECT
             events.id, events.deviceName, devices.location, events.employeeId, events.name,
-            DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date, 
-            events.time, events.eventDesc, events.pictureURL, events.localImagePath, 
+            DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date,
+            events.time, events.eventDesc, events.pictureURL, events.localImagePath,
             events.syncType, events.apiStatus
     """
     base_sql = "FROM events JOIN devices ON events.deviceName = devices.name"
@@ -110,15 +110,15 @@ def get_events(**filters):
     if filters.get('device'):
         where_clauses.append("events.deviceName = %s")
         values.append(filters['device'])
-    
+
     if filters.get('location'):
         where_clauses.append("devices.location = %s")
         values.append(filters['location'])
-        
+
     if filters.get('start_date'):
         where_clauses.append("STR_TO_DATE(events.date, '%Y-%m-%d') >= %s")
         values.append(filters['start_date'])
-        
+
     if filters.get('end_date'):
         where_clauses.append("STR_TO_DATE(events.date, '%Y-%m-%d') <= %s")
         values.append(filters['end_date'])
@@ -129,7 +129,7 @@ def get_events(**filters):
     data_sql = select_clause + base_sql + " ORDER BY events.id DESC"
     c.execute(data_sql, tuple(values))
     events = c.fetchall()
-    
+
     c.close()
     conn.close()
     return events
@@ -139,10 +139,10 @@ def get_event_by_id(event_id):
     conn = get_db()
     c = conn.cursor(dictionary=True)
     query = """
-        SELECT 
+        SELECT
             events.id, events.deviceName, devices.ip, devices.location, events.employeeId, events.name,
-            DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date, 
-            events.time, events.eventDesc, events.pictureURL, events.localImagePath, 
+            DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date,
+            events.time, events.eventDesc, events.pictureURL, events.localImagePath,
             events.syncType, events.apiStatus
         FROM events JOIN devices ON events.deviceName = devices.name
         WHERE events.id = %s
@@ -158,7 +158,7 @@ def get_events_by_date(target_date, location=None, ip=None):
     conn = get_db()
     c = conn.cursor(dictionary=True)
     base_query = """
-        SELECT 
+        SELECT
             events.id, DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date, events.time,
             events.name, events.employeeId, events.deviceName, devices.ip, devices.location,
             events.eventDesc, events.syncType, events.apiStatus, events.pictureURL, events.localImagePath
@@ -184,7 +184,7 @@ def add_device(ip, name, location, target_api, username, password):
     conn = get_db()
     c = conn.cursor()
     try:
-        c.execute("INSERT INTO devices (ip, name, location, targetApi, username, password, status) VALUES (%s, %s, %s, %s, %s, %s, 'new')", 
+        c.execute("INSERT INTO devices (ip, name, location, targetApi, username, password, status) VALUES (%s, %s, %s, %s, %s, %s, 'new')",
                   (ip, name, location, target_api, username, password))
         return True, "Perangkat berhasil ditambahkan."
     except mysql.connector.IntegrityError:
@@ -204,7 +204,7 @@ def update_device(original_ip, name, location, target_api, username, password):
     else:
         query = "UPDATE devices SET name=%s, location=%s, targetApi=%s, username=%s WHERE ip=%s"
         values = (name, location, target_api, username, original_ip)
-        
+
     c.execute(query, values)
     affected = c.rowcount
     c.close()
@@ -249,29 +249,29 @@ def get_devices_status():
         row['lastSync'] = last_sync.strftime('%d-%m-%Y %H:%M:%S') if last_sync else 'Belum pernah'
         result.append(row)
     return result
-    
+
 def get_dashboard_stats():
     """Mengambil data statistik ringkas untuk halaman dashboard."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
-    
+
     c.execute("SELECT COUNT(*) as total_devices FROM devices WHERE is_active = TRUE")
     total_devices = c.fetchone()['total_devices']
-    
+
     c.execute("SELECT COUNT(*) as online_devices FROM devices WHERE status = 'online' AND is_active = TRUE")
     online_devices = c.fetchone()['online_devices']
-    
+
     today_str = date.today().strftime('%Y-%m-%d')
-    
+
     filters_for_today = {'start_date': today_str, 'end_date': today_str}
     events_today_list = get_events(**filters_for_today)
-    
+
     events_today_count = len(events_today_list)
     failed_api_count = sum(1 for event in events_today_list if event.get('apiStatus') == 'failed')
-    
+
     c.close()
     conn.close()
-    
+
     return {
         'total_devices': total_devices,
         'online_devices': online_devices,
@@ -284,10 +284,10 @@ def get_recent_events(limit=5):
     conn = get_db()
     c = conn.cursor(dictionary=True)
     query = """
-        SELECT 
+        SELECT
             events.id, events.deviceName, devices.location, events.name, events.apiStatus,
-            events.date, events.time, events.eventDesc
-        FROM events 
+            events.date, events.time, events.eventDesc, events.syncType
+        FROM events
         JOIN devices ON events.deviceName = devices.name
         WHERE devices.is_active = TRUE
         ORDER BY events.id DESC

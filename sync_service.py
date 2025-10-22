@@ -279,7 +279,7 @@ def get_event_desc(event):
     major = event.get("major")
     minor = event.get("minor")
     # Gunakan fallback dalam Bahasa Indonesia
-    return EVENT_MAP.get((major, minor), f"Event tidak dikenali (Major: {major}, Minor: {minor})")
+    return EVENT_MAP.get((major, minor), f"Unrecognized Event (Major: {major}, Minor: {minor})")
 
 def save_event(event, device):
     """Menyimpan event, kini menerima seluruh objek device."""

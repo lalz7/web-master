@@ -3,7 +3,7 @@ import platform
 import datetime
 import json
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, Response
-from flask_login import (LoginManager, UserMixin, login_user, logout_user, 
+from flask_login import (LoginManager, UserMixin, login_user, logout_user,
                          login_required, current_user)
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
@@ -76,12 +76,28 @@ def index():
 def events():
     """Route untuk halaman Log Event yang detail."""
     filters = {k: v for k, v in request.args.items() if v}
+    
+    # Cek apakah pengguna meminta untuk melihat "semua" data (dari tombol reset)
+    show_all = 'show' in filters
+    
+    # Jika TIDAK ada filter tanggal DAN pengguna TIDAK menekan reset,
+    # maka atur filter default ke hari ini.
+    if not show_all and 'start_date' not in filters and 'end_date' not in filters:
+        today_str = datetime.date.today().strftime('%Y-%m-%d')
+        filters['start_date'] = today_str
+        filters['end_date'] = today_str
+    
+    # Hapus parameter 'show' agar tidak mengganggu query database
+    if 'show' in filters:
+        del filters['show']
+        
     events_data = db.get_events(**filters)
     all_devices = db.get_all_devices()
     all_locations = db.get_all_unique_locations()
+    
     return render_template('events.html', 
                            events=events_data, 
-                           filters=filters, 
+                           filters=filters, # 'filters' ini sudah berisi tanggal hari ini jika perlu
                            all_devices=all_devices,
                            all_locations=all_locations)
 
@@ -203,4 +219,3 @@ def api_get_logs_by_date(date_string):
 if __name__ == '__main__':
     db.init_db()
     app.run(debug=True, host='0.0.0.0')
-

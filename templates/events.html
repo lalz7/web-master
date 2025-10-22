@@ -3,7 +3,6 @@
 {% block title %}Log Event{% endblock %}
 
 {% block content %}
-<!-- FORM FILTER UNTUK EVENTS -->
 <div class="card mb-4">
     <div class="card-header">
         <h5 class="mb-0"><i class="fas fa-filter me-2"></i>Filter Event</h5>
@@ -30,7 +29,6 @@
                         {% endfor %}
                     </select>
                 </div>
-                <!-- PERUBAHAN: Filter 'Nama Orang' diubah menjadi dropdown 'Lokasi' -->
                 <div class="col-md-3">
                     <label for="location" class="form-label">Lokasi</label>
                     <select name="location" class="form-select">
@@ -43,7 +41,7 @@
                     </select>
                 </div>
                 <div class="col-12 text-end">
-                    <a href="{{ url_for('events') }}" class="btn btn-secondary"><i class="fas fa-undo me-1"></i>Reset</a>
+                    <a href="{{ url_for('events', show='all') }}" class="btn btn-secondary"><i class="fas fa-undo me-1"></i>Reset</a>
                     <button type="submit" class="btn btn-primary"><i class="fas fa-search me-1"></i>Filter</button>
                 </div>
             </div>
@@ -51,7 +49,6 @@
     </div>
 </div>
 
-<!-- TABEL EVENT -->
 <div class="card">
     <div class="card-header">
         <h5 class="mb-0"><i class="fas fa-history me-2"></i>Log Event</h5>
@@ -81,13 +78,13 @@
                         <td>{{ event.date }}</td>
                         <td>{{ event.time }}</td>
                         <td>
-                            {% if event.syncType == 'realtime' %}<span class="badge bg-primary bg-opacity-75">Realtime</span>{% else %}<span class="badge bg-info bg-opacity-75">Catch-up</span>{% endif %}
+                            {% if event.syncType == 'realtime' %}<span class="badge bg-primary bg-opacity-75">realtime</span>{% else %}<span class="badge bg-info bg-opacity-75">catch-up</span>{% endif %}
                         </td>
                         <td>
-                            {% if event.apiStatus == 'success' %}<span class="badge bg-success">Success</span>
-                            {% elif event.apiStatus == 'failed' %}<span class="badge bg-danger">Failed</span>
-                            {% elif event.apiStatus == 'skipped' or event.apiStatus == 'skipped_no_api' %}<span class="badge bg-secondary">Skipped</span>
-                            {% else %}<span class="badge bg-warning text-dark">Pending</span>{% endif %}
+                            {% if event.apiStatus == 'success' %}<span class="badge bg-success">success</span>
+                            {% elif event.apiStatus == 'failed' %}<span class="badge bg-danger">failed</span>
+                            {% elif event.apiStatus == 'skipped' or event.apiStatus == 'skipped_no_api' %}<span class="badge bg-secondary">skipped</span>
+                            {% else %}<span class="badge bg-warning text-dark">pending</span>{% endif %}
                         </td>
                     </tr>
                     {% else %}
@@ -99,7 +96,6 @@
     </div>
 </div>
 
-<!-- MODAL DETAIL EVENT (LENGKAP) -->
 <div class="modal fade" id="eventDetailModal" tabindex="-1" aria-labelledby="eventDetailModalLabel" aria-hidden="true">
   <div class="modal-dialog" id="event-modal-dialog">
     <div class="modal-content">
@@ -223,4 +219,3 @@ $(document).ready(function() {
 });
 </script>
 {% endblock %}
-
