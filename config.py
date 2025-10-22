@@ -19,3 +19,21 @@ SUSPEND_SECONDS = 300
 
 # Batas waktu dalam detik untuk menunggu respons dari perangkat
 REQUEST_TIMEOUT = 30
+
+# --- PEMETAAN EVENT HIKVISION ---
+EVENT_MAP = {
+    # Authentication Success
+    (5, 75): "Face recognized",
+
+    # Authentication Failure
+    (5, 80): "Face recognition failed",
+    (5, 76): "Stranger face recognition failed",
+    (5, 18): "Card & face authentication failed",
+    (5, 43): "Card not registered",
+
+    # Alarms & Status
+    (5, 37): "Door opened",
+    (5, 41): "Door held open too long",
+    (1, 10): "Door not closed",
+    (1, 7): "Device tamper alarm",
+}

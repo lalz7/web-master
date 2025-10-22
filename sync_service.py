@@ -14,7 +14,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import random
 
-# Impor konfigurasi dan modul database kustom
+# Impor konfigurasi (termasuk EVENT_MAP) dan modul database kustom
 from config import *
 import database as db
 
@@ -53,12 +53,6 @@ SUSPEND_UNTIL = {}
 LAST_KNOWN_STATUS = {} 
 DATA_LOCK = threading.Lock() # Kunci untuk melindungi akses ke variabel global di atas
 # ----------------------------------------
-
-# --- EVENT_MAP hanya berisi satu event yang dianggap valid ---
-EVENT_MAP = {
-    (5, 75): "Face recognized"
-}
-# -------------------------------------------------------------
 
 # --- FUNGSI BANTU (HELPERS) ---
 def sanitize_name(name):
@@ -103,7 +97,6 @@ def get_last_sync_time(ip):
         if isinstance(dt, datetime.datetime):
             return dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
             
-    # PERUBAHAN: Jika perangkat baru, mulai dari jam 00:00 hari ini.
     dt = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     return dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
 
@@ -225,6 +218,7 @@ def send_event_to_api(event_data, device, user, password, db_event_id):
     }
     
     save_payload_to_log_file(payload, device, event_data.get("eventId", "unknown"))
+    
     sent_details = (f"authId: {payload['authId']}, device: '{payload['device']}', date: {payload['date']}, image: {image_status_msg}")
     log(device, f"Mengirim ke '{target_api}' -> {sent_details}")
 
@@ -281,10 +275,11 @@ def get_events_from_device(device, start_time, end_time):
     return [] 
 
 def get_event_desc(event):
-    """Returns the event description. If unrecognized, specifies the event codes."""
+    """Mengembalikan deskripsi event dari EVENT_MAP di config.py."""
     major = event.get("major")
     minor = event.get("minor")
-    return EVENT_MAP.get((major, minor), f"Unrecognized Event (Major: {major}, Minor: {minor})")
+    # Gunakan fallback dalam Bahasa Indonesia
+    return EVENT_MAP.get((major, minor), f"Event tidak dikenali (Major: {major}, Minor: {minor})")
 
 def save_event(event, device):
     """Menyimpan event, kini menerima seluruh objek device."""
@@ -293,19 +288,18 @@ def save_event(event, device):
     
     eventId, device_name, pictureURL = event.get("serialNo"), device_label(device), event.get("pictureURL")
     
+    # Event tanpa URL gambar tidak bisa diproses lebih lanjut
     if not pictureURL:
         return False
         
     name_from_device = event.get("name")
     if not name_from_device or name_from_device.lower() == 'unknown':
-        name = "Stranger"
+        name = "unknown"
     else:
         name = name_from_device
 
     if event_exists(eventId, device_name):
         return False
-        
-    log(device, f"Memproses event baru (ID: {eventId}) untuk '{name}'...")
         
     try:
         dt = datetime.datetime.strptime(event.get("time")[:19], "%Y-%m-%dT%H:%M:%S")
@@ -313,15 +307,22 @@ def save_event(event, device):
     except Exception:
         dt, date_value, time_value = None, "0000-00-00", "00:00:00"
     
-    employee_id = int(event["employeeNoString"]) if event.get("employeeNoString", "").isdigit() else None
+    sync_type = "realtime" if dt and abs((datetime.datetime.now() - dt).total_seconds()) <= 120 else "catch-up"
     
     event_desc = get_event_desc(event)
-    is_valid_event = (event_desc == "Face recognized")
     
-    if not is_valid_event:
-        log(device, f"Skipped: Event '{event_desc}' is not valid (ID: {eventId}).")
+    log(device, f"Memproses event '{sync_type}' - {time_value} (ID: {eventId}) | {event_desc} untuk '{name}'...")
         
-    initial_api_status = 'pending' if is_valid_event else 'failed'
+    employee_id = int(event["employeeNoString"]) if event.get("employeeNoString", "").isdigit() else None
+    
+    # Kondisi spesifik untuk mengirim ke API, sesuai permintaan.
+    is_valid_for_api = (event_desc == "Face recognized")
+    
+    if not is_valid_for_api:
+        log(device, f"Info: Event '{event_desc}' tidak akan dikirim ke API (ID: {eventId}).")
+        
+    # Status API awal: 'pending' hanya jika akan dikirim, selain itu 'skipped'.
+    initial_api_status = 'pending' if is_valid_for_api else 'skipped'
 
     local_image_path = None
     if dt:
@@ -334,7 +335,7 @@ def save_event(event, device):
             if not os.path.exists(absolute_folder): os.makedirs(absolute_folder, exist_ok=True)
             r_img = requests.get(pictureURL, auth=HTTPDigestAuth(user, password), timeout=REQUEST_TIMEOUT)
             if r_img.status_code == 200:
-                safe_name = sanitize_name(name) if name else "Stranger"
+                safe_name = sanitize_name(name) if name else "unknown"
                 file_name = f"{safe_name}-{eventId}.jpg"
                 local_image_path = os.path.join(relative_folder, file_name).replace("\\", "/")
                 absolute_file_path = os.path.join(absolute_folder, file_name)
@@ -343,7 +344,6 @@ def save_event(event, device):
         except Exception as e:
             log(device, f"Error download gambar (ID: {eventId}): {e}", level="WARN")
 
-    sync_type = "realtime" if dt and abs((datetime.datetime.now() - dt).total_seconds()) <= 100 else "catch-up"
     conn, c, db_event_id = db.get_db(), None, None
     try:
         c = conn.cursor()
@@ -354,7 +354,8 @@ def save_event(event, device):
         
         log(device, f"Berhasil menyimpan event (ID: {eventId}) ke database.")
 
-        if db_event_id and is_valid_event:
+        # Pengiriman API hanya dilakukan jika kondisi terpenuhi
+        if db_event_id and is_valid_for_api:
             api_data = {
                 "deviceName": device_name, "employeeId": employee_id, "pictureURL": pictureURL, 
                 "datetime_obj": dt, "eventId": eventId
@@ -502,4 +503,3 @@ def main_sync():
 # --- ENTRY POINT ---
 if __name__ == "__main__":
     main_sync()
-
