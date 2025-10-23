@@ -120,7 +120,7 @@
                                 <div class="fw-bold">{{ event.name or 'N/A' }}</div>
                                 <small class="text-muted">{{ event.location or 'Tanpa Lokasi' }} &bull; {{ event.deviceName }}</small>
                             </div>
-                            <div class="flex-shrink-0 d-flex justify-content-end align-items-center" style="min-width: 130px;">
+                            <div class="flex-shrink-0 d-flex justify-content-end align-items-center" style="min-width: 140px; white-space: nowrap;">
                                 {% if event.syncType == 'realtime' %}
                                     <span class="badge rounded-pill bg-primary-subtle text-primary-emphasis">realtime</span>
                                 {% else %}

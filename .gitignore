@@ -1,5 +1,6 @@
-/event.logs
-/service_logs
-/static
-/venv
-/__pycache__
+# Ignore directories for logs, static files, virtual environments, and cache
+event_logs
+service_logs
+static
+venv
+__pycache__

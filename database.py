@@ -222,15 +222,11 @@ def delete_device(ip):
     return affected > 0
 
 def update_device_ping_status(ip: str, status: str):
-    """Memperbarui status dan lastSync perangkat setelah ping."""
+    """Memperbarui status perangkat setelah ping (TANPA MENGUBAH lastSync)."""
     conn = get_db()
     c = conn.cursor()
-    if status == 'online':
-        query = "UPDATE devices SET status=%s, lastSync=%s WHERE ip=%s"
-        c.execute(query, (status, datetime.now(), ip))
-    else:
-        query = "UPDATE devices SET status=%s WHERE ip=%s"
-        c.execute(query, (status, ip))
+    query = "UPDATE devices SET status=%s WHERE ip=%s"
+    c.execute(query, (status, ip))
     c.close()
     conn.close()
 

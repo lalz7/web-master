@@ -5,36 +5,66 @@ DB_USER = "izlal"
 DB_PASS = "1sampai8"
 DB_NAME = "web_master"
 
-# Pengaturan Polling (Kombinasi Responsif untuk Jam Sibuk)
+# Pengaturan Polling
 POLL_INTERVAL = 2
-BATCH_MAX_RESULTS = 20 # Diperkecil agar setiap batch cepat diproses
-
+BATCH_MAX_RESULTS = 100
 TIMEZONE = "+07:00"
 IMG_DIR = "static/images"
-LOG_DIR = "payload_logs"
-SERVICE_LOG_DIR = "service_logs" 
+
+# Pengaturan Direktori Log (BARU)
+EVENT_LOG_DIR = "event_logs"       # Untuk log bersih (event yang diproses)
+SERVICE_LOG_DIR = "service_logs" # Untuk semua event mentah yang diterima
 
 # Pengaturan Ping & Suspend
 PING_MAX_FAIL = 5
 SUSPEND_SECONDS = 300
 
+# Pengaturan Catch-up
+CATCH_UP_CHUNK_MINUTES = 10
+BIG_CATCHUP_THRESHOLD_SECONDS = 3600 # 1 jam
+
 # Batas waktu dalam detik untuk menunggu respons dari perangkat
 REQUEST_TIMEOUT = 30
 
-# --- PEMETAAN EVENT HIKVISION ---
+# --- PEMETAAN EVENT HIKVISION (LENGKAP) ---
 EVENT_MAP = {
-    # Authentication Success
+    # == Otentikasi Berhasil (Major: 5) ==
     (5, 75): "Face Recognized",
+    (5, 1): "Legal Card Pass",
+    (5, 17): "Card and Face Authentication Pass",
+    (5, 23): "Fingerprint Pass",
+    (5, 25): "Fingerprint and Face Authentication Pass",
+    (5, 26): "Fingerprint and Card Authentication Pass",
+    (5, 28): "Fingerprint, Card, and Face Authentication Pass",
+    (5, 33): "Employee No and Fingerprint Authentication Pass",
+    (5, 34): "Employee No and Face Authentication Pass",
+    (5, 35): "Employee No and Card Authentication Pass",
+    (5, 53): "Multi-Factor Authentication Pass",
 
-    # Authentication Failure
-    (5, 80): "Face Recognition Failed",
-    (5, 76): "Stranger Face Recognition Failed",
-    (5, 18): "Card & Face Authentication Failed",
-    (5, 43): "Card Not Registered",
+    # == Otentikasi Gagal (Major: 5) ==
+    (5, 80): "Face recognition failed",
+    (5, 76): "Stranger face recognition failed",
+    (5, 2): "Card Invalid Time Period",
+    (5, 3): "Card No Right",
+    (5, 4): "Anti-Passback Fail",
+    (5, 5): "Card Not Found / Unregistered Card",
+    (5, 18): "Card and Face Authentication Failed",
+    (5, 24): "Fingerprint Authentication Failed",
+    (5, 43): "Card not registered",
 
-    # Alarms & Status
-    (5, 37): "Door Opened",
-    (5, 41): "Door Held Open Too Long",
-    (1, 10): "Door Not Closed",
-    (1, 7): "Device Tamper Alarm",
+    # == Panggilan & Duress (Major: 5) ==
+    (5, 48): "Duress Alarm",
+    (5, 12): "Call Center",
+
+    # == Event Pintu (Major: 5) ==
+    (5, 37): "Door opened",
+    (5, 38): "Door closed",
+    (5, 39): "Door Exception (Opened Under Duress)",
+    (5, 40): "Door Button Pressed to Open",
+    (5, 41): "Door held open too long (Door Open Timeout)",
+    
+    # == Alarm Umum (Major: 1) ==
+    (1, 1): "Tamper Alarm for Door Contact",
+    (1, 7): "Device tamper alarm",
+    (1, 10): "Door not closed",
 }
