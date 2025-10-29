@@ -69,8 +69,15 @@
                                     </button>
                                 {% endif %}
                             </form>
+                            
+                            <a href="{{ url_for('manage_device_users', ip=device.ip) }}" class="btn btn-sm btn-outline-info" title="Kelola Pengguna" {% if not device.is_active %}disabled{% endif %}>
+                                <i class="fas fa-users"></i>
+                            </a>
+
                             <button class="btn btn-sm btn-outline-primary ping-btn" data-ip="{{ device.ip }}" title="Live Ping" {% if not device.is_active %}disabled{% endif %}><i class="fas fa-wifi"></i></button>
+                            
                             <button type="button" class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#editModal-{{ device.ip.replace('.', '-') }}" title="Edit"><i class="fas fa-edit"></i></button>
+
                             <button class="btn btn-sm btn-outline-danger delete-btn" data-ip="{{ device.ip }}" data-name="{{ device.name }}" title="Hapus"><i class="fas fa-trash"></i></button>
                         </td>
                     </tr>

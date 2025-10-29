@@ -49,6 +49,16 @@ def init_db():
     c.close()
     conn.close()
 
+def get_device_by_ip(ip):
+    """Mengambil detail satu perangkat berdasarkan IP."""
+    conn = get_db()
+    c = conn.cursor(dictionary=True)
+    c.execute("SELECT * FROM devices WHERE ip = %s", (ip,))
+    device = c.fetchone()
+    c.close()
+    conn.close()
+    return device
+
 def get_all_devices():
     """Mengambil SEMUA PERANGKAT AKTIF untuk layanan sinkronisasi."""
     conn = get_db()
@@ -152,6 +162,43 @@ def get_event_by_id(event_id):
     c.close()
     conn.close()
     return event
+
+# --- FUNGSI BARU ---
+def get_earliest_attendance_by_date(employee_ids, target_date):
+    """
+    Mengambil jam absen terawal untuk daftar employee_id pada tanggal tertentu.
+    Hanya mengambil event 'Face Recognized'.
+    """
+    if not employee_ids:
+        return {}
+        
+    conn = get_db()
+    c = conn.cursor(dictionary=True)
+    
+    # Membuat placeholder untuk query IN (...)
+    format_strings = ','.join(['%s'] * len(employee_ids))
+    
+    query = f"""
+        SELECT employeeId, MIN(time) AS earliest_time
+        FROM events
+        WHERE 
+            date = %s 
+            AND employeeId IN ({format_strings})
+            AND eventDesc = 'Face Recognized'
+        GROUP BY employeeId
+    """
+    
+    # Gabungkan parameter
+    params = [target_date] + employee_ids
+    
+    c.execute(query, tuple(params))
+    results = c.fetchall()
+    c.close()
+    conn.close()
+    
+    # Ubah hasil query menjadi dictionary {employeeId: 'HH:MM:SS'}
+    return {row['employeeId']: row['earliest_time'] for row in results}
+# --------------------
 
 def get_events_by_date(target_date, location=None, ip=None):
     """Mengambil event berdasarkan tanggal dengan urutan field yang rapi untuk API."""
