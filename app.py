@@ -3,6 +3,7 @@ import platform
 import datetime
 import json
 import requests
+import base64
 from requests.auth import HTTPDigestAuth
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, Response
 from flask_login import (LoginManager, UserMixin, login_user, logout_user,
@@ -178,31 +179,65 @@ def api_devices_status():
     devices_status = db.get_devices_status()
     return jsonify(devices_status)
 
-# --- API MANAJEMEN PENGGUNA ---
+# --- API MANAJEMEN PENGGUNA (DENGAN PAGINATION) ---
 @app.route('/api/devices/<string:ip>/users')
 @login_required
 def api_get_device_users(ip):
     device = db.get_device_by_ip(ip)
     if not device or not device.get('username') or not device.get('password'):
         return jsonify({'error': 'Kredensial perangkat tidak ditemukan.'}), 404
+
     url = f"http://{device['ip']}/ISAPI/AccessControl/UserInfo/Search?format=json"
     auth = HTTPDigestAuth(device['username'], device['password'])
-    payload = {"UserInfoSearchCond": {"searchID": "1", "searchResultPosition": 0, "maxResults": 2000}}
+    
+    all_users = []
+    search_id = "random_search_id_" + str(datetime.datetime.now().timestamp())
+    position = 0
+    max_results = 30 # Ambil per 30 pengguna untuk efisiensi
+
     try:
-        response = requests.post(url, json=payload, auth=auth, timeout=10)
-        data = response.json()
-        if response.status_code != 200:
-            return jsonify({'error': f"Error dari perangkat: {data.get('errorMsg', 'Unknown')}"}), 502
-        user_list = data.get('UserInfoSearch', {}).get('UserInfo', [])
-        if user_list:
-            employee_ids = [int(u['employeeNo']) for u in user_list if u.get('employeeNo', '').isdigit()]
+        while True:
+            payload = {
+                "UserInfoSearchCond": {
+                    "searchID": search_id,
+                    "searchResultPosition": position,
+                    "maxResults": max_results
+                }
+            }
+            
+            response = requests.post(url, json=payload, auth=auth, timeout=15)
+            if response.status_code != 200:
+                data = response.json()
+                return jsonify({'error': f"Error dari perangkat: {data.get('errorMsg', 'Unknown')}"}), 502
+            
+            data = response.json().get('UserInfoSearch', {})
+            users_batch = data.get('UserInfo', [])
+            if users_batch:
+                all_users.extend(users_batch)
+            
+            # Cek apakah masih ada data
+            matches = data.get('numOfMatches', 0)
+            total_matches = data.get('totalMatches', 0)
+            
+            position += matches
+            
+            # Berhenti jika sudah tidak ada data lagi atau jika perangkat tidak mengembalikan data (safety break)
+            if not users_batch or position >= total_matches:
+                break
+        
+        # Proses data absensi setelah semua pengguna terkumpul
+        if all_users:
+            employee_ids = [int(u['employeeNo']) for u in all_users if u.get('employeeNo', '').isdigit()]
             attendance_data = db.get_earliest_attendance_by_date(employee_ids, datetime.date.today().strftime('%Y-%m-%d'))
-            for user in user_list:
+            for user in all_users:
                 emp_id = int(user.get('employeeNo')) if user.get('employeeNo','').isdigit() else None
                 user['attendance_time'] = attendance_data.get(emp_id)
-        return jsonify(user_list)
+                
+        return jsonify(all_users)
+
     except Exception as e:
         return jsonify({'error': f"Gagal terhubung atau memproses: {e}"}), 500
+# ----------------------------------------------------
 
 @app.route('/api/devices/<string:ip>/users/<string:employee_no>/update', methods=['PUT'])
 @login_required

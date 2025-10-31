@@ -96,7 +96,7 @@
             <div class="row">
                 <div class="col-md-7">
                     <div class="row">
-                        <div class="col-md-6 mb-3"><label for="add-employee-no" class="form-label">ID Pengguna</label><input type="number" class="form-control" id="add-employee-no" min="1" required><small class="form-text text-muted">Pastikan ID unik.</small></div>
+                        <div class="col-md-6 mb-3"><label for="add-employee-no" class="form-label">ID Karyawan</label><input type="number" class="form-control" id="add-employee-no" min="1" required><small class="form-text text-muted">Pastikan ID unik.</small></div>
                         <div class="col-md-6 mb-3">
                             <label for="add-user-gender" class="form-label">Jenis Kelamin</label>
                             <select id="add-user-gender" class="form-select"><option value="unknown">Tidak Diketahui</option><option value="male">Laki-laki</option><option value="female">Perempuan</option></select>
@@ -164,7 +164,6 @@ $(document).ready(function() {
                     users.forEach(user => {
                         const gender = getGenderDisplay(user.gender);
                         const attendanceTime = user.attendance_time;
-                        // Kunci untuk sorting: waktu jika ada, 'zzz' jika tidak ada (agar 'zzz' selalu di bawah)
                         const attendanceSortKey = attendanceTime || 'zzz'; 
                         const attendanceHtml = attendanceTime ? `<span class="badge bg-success rounded-pill">${attendanceTime}</span>` : `<span class="badge bg-secondary rounded-pill">Belum Hadir</span>`;
                         
@@ -181,7 +180,6 @@ $(document).ready(function() {
                     });
                 }
                 dataTable = tableElement.DataTable({
-                    // PERBAIKAN: Urutkan berdasarkan kolom Kehadiran (indeks 3) secara ascending
                     "order": [[3, "asc"]],
                     "language": {
                         "search": "Cari:",
@@ -221,7 +219,8 @@ $(document).ready(function() {
             } else {
                 showNotification('Tidak ada perubahan terdeteksi.', 'info');
             }
-            editModal.hide(); loadUsers();
+            editModal.hide(); 
+            setTimeout(loadUsers, 1500); // Beri jeda sebelum memuat ulang
         } catch (error) {
             showNotification(error.message, 'danger', $('#edit-notification-area'));
         } finally {
@@ -242,7 +241,7 @@ $(document).ready(function() {
                     const res = await fetch(`/api/devices/${deviceIp}/users/${empNo}/delete`, { method: 'DELETE' });
                     if (!res.ok) { const resData = await res.json(); throw new Error(resData.error); }
                     Swal.fire('Berhasil!', 'Pengguna berhasil dihapus.', 'success');
-                    loadUsers();
+                    setTimeout(loadUsers, 1500); // Beri jeda sebelum memuat ulang
                 } catch (error) {
                     Swal.fire('Gagal!', error.message, 'error');
                 }
@@ -317,7 +316,8 @@ $(document).ready(function() {
             const resData = await res.json();
             if (!res.ok) throw new Error(resData.error || resData.warning);
             showNotification(resData.message || resData.warning || 'Pengguna berhasil ditambahkan!', resData.warning ? 'warning' : 'success');
-            addModal.hide(); loadUsers();
+            addModal.hide(); 
+            setTimeout(loadUsers, 2000); // Beri jeda 2 detik sebelum memuat ulang
         } catch (error) {
             showNotification(error.message, 'danger', $('#add-notification-area'));
         } finally {
