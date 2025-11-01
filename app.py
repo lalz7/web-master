@@ -223,12 +223,12 @@ def api_get_device_users(ip):
             
             # Berhenti jika sudah tidak ada data lagi atau jika perangkat tidak mengembalikan data (safety break)
             if not users_batch or position >= total_matches:
-                break
-        
-        # Proses data absensi setelah semua pengguna terkumpul
+                break# Proses data absensi setelah semua pengguna terkumpul
         if all_users:
             employee_ids = [int(u['employeeNo']) for u in all_users if u.get('employeeNo', '').isdigit()]
-            attendance_data = db.get_earliest_attendance_by_date(employee_ids, datetime.date.today().strftime('%Y-%m-%d'))
+            # Ambil nama perangkat dari objek 'device' yang sudah ada
+            device_name = device.get('name') 
+            attendance_data = db.get_earliest_attendance_by_date(employee_ids, datetime.date.today().strftime('%Y-%m-%d'), device_name)
             for user in all_users:
                 emp_id = int(user.get('employeeNo')) if user.get('employeeNo','').isdigit() else None
                 user['attendance_time'] = attendance_data.get(emp_id)

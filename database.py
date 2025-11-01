@@ -164,12 +164,12 @@ def get_event_by_id(event_id):
     return event
 
 # --- FUNGSI BARU ---
-def get_earliest_attendance_by_date(employee_ids, target_date):
+def get_earliest_attendance_by_date(employee_ids, target_date, device_name):
     """
-    Mengambil jam absen terawal untuk daftar employee_id pada tanggal tertentu.
+    Mengambil jam absen terawal untuk daftar employee_id pada tanggal DAN perangkat tertentu.
     Hanya mengambil event 'Face Recognized'.
     """
-    if not employee_ids:
+    if not employee_ids or not device_name:
         return {}
         
     conn = get_db()
@@ -183,13 +183,14 @@ def get_earliest_attendance_by_date(employee_ids, target_date):
         FROM events
         WHERE 
             date = %s 
+            AND deviceName = %s
             AND employeeId IN ({format_strings})
             AND eventDesc = 'Face Recognized'
         GROUP BY employeeId
     """
     
-    # Gabungkan parameter
-    params = [target_date] + employee_ids
+    # Gabungkan parameter (device_name ditambahkan setelah target_date)
+    params = [target_date, device_name] + employee_ids
     
     c.execute(query, tuple(params))
     results = c.fetchall()

@@ -4,24 +4,14 @@
 
 {% block content %}
 <style>
-    /* Mengatur perataan teks dasar pada tabel */
+    /* * Perataan (alignment) sekarang diatur sepenuhnya oleh DataTables di blok <script>.
+     * Kita hanya mengatur perataan vertikal dan jarak tombol di sini.
+    */
     #usersTable th,
     #usersTable td {
         vertical-align: middle;
-        text-align: center;
     }
-    /* Kolom ID (pertama) isinya dibuat rata kanan */
-    #usersTable td:nth-child(1) {
-        text-align: right;
-        font-weight: 600;
-    }
-    /* Kolom Nama (ke-2) dan Jenis Kelamin (ke-3) dibuat rata kiri */
-    #usersTable th:nth-child(2),
-    #usersTable td:nth-child(2),
-    #usersTable th:nth-child(3),
-    #usersTable td:nth-child(3) {
-        text-align: left;
-    }
+
     /* Memberi jarak pada grup tombol aksi di dalam tabel */
     .btn-action-group .btn {
         margin: 0 0.15rem;
@@ -51,11 +41,11 @@
             <table id="usersTable" class="table table-hover" style="width:100%">
                 <thead class="table-dark">
                     <tr>
-                        <th class="text-center" style="width: 15%;">ID</th>
+                        <th style="width: 10%;">Id</th>
                         <th style="width: 45%;">Nama</th>
-                        <th class="text-left" style="width: 15%;">Jenis Kelamin</th>
-                        <th class="text-center" style="width: 15%;">Kehadiran</th>
-                        <th class="text-center no-sort" style="width: 10%;">Aksi</th>
+                        <th style="width: 20%;">Jenis Kelamin</th>
+                        <th style="width: 15%;">Kehadiran</th>
+                        <th class="no-sort" style="width: 10%;">Aksi</th>
                     </tr>
                 </thead>
                 <tbody></tbody>
@@ -164,29 +154,45 @@ $(document).ready(function() {
                     users.forEach(user => {
                         const gender = getGenderDisplay(user.gender);
                         const attendanceTime = user.attendance_time;
-                        const attendanceSortKey = attendanceTime || 'zzz'; 
-                        const attendanceHtml = attendanceTime ? `<span class="badge bg-success rounded-pill">${attendanceTime}</span>` : `<span class="badge bg-secondary rounded-pill">Belum Hadir</span>`;
+                        const attendanceSortKey = attendanceTime || 'zzz';
+                        // REVISI: "Belum Hadir" ganti jadi "absent"
+                        const attendanceHtml = attendanceTime ? `<span class="badge bg-success rounded-pill">${attendanceTime}</span>` : `<span class="badge bg-secondary rounded-pill">absent</span>`;
                         
+                        // REVISI: Semua kelas perataan (text-right, text-center) dihapus. Diatur oleh DataTables.
                         tableBody.append(`<tr>
-                            <td class="text-right"><strong>${user.employeeNo}</strong></td>
+                            <td><strong>${user.employeeNo}</strong></td>
                             <td>${user.name}</td>
                             <td>${gender}</td>
-                            <td class="text-center" data-order="${attendanceSortKey}">${attendanceHtml}</td>
-                            <td class="text-center btn-action-group">
+                            <td data-order="${attendanceSortKey}">${attendanceHtml}</td>
+                            <td class="btn-action-group">
                                 <button class="btn btn-sm btn-outline-warning edit-btn" data-id="${user.employeeNo}" title="Edit Data"><i class="fas fa-edit"></i></button>
                                 <button class="btn btn-sm btn-outline-danger delete-btn" data-id="${user.employeeNo}" data-name="${user.name}" title="Hapus Pengguna"><i class="fas fa-trash"></i></button>
                             </td>
                         </tr>`);
                     });
                 }
+                
+                // REVISI: Inisialisasi DataTables diubah untuk mengatur perataan
                 dataTable = tableElement.DataTable({
-                    "order": [[3, "asc"]],
+                    "order": [[3, "asc"]], // Urutkan berdasarkan kehadiran
                     "language": {
                         "search": "Cari:",
                         "lengthMenu": "Tampilkan _MENU_ entri",
                         "info": "Menampilkan _START_ sampai _END_ dari _TOTAL_ entri",
                         "paginate": { "next": "Berikutnya", "previous": "Sebelumnya" }
-                    }
+                    },
+                    "columnDefs": [
+                        // [Kolom 0] Id: rata kanan
+                        { "className": "text-right", "targets": 0 },
+                        // [Kolom 1] Nama: rata kiri (default, tapi kita tegaskan)
+                        { "className": "text-left", "targets": 1 },
+                        // [Kolom 2] Jenis Kelamin: rata kiri
+                        { "className": "text-left", "targets": 2 },
+                        // [Kolom 3] Kehadiran: rata tengah
+                        { "className": "text-center", "targets": 3 },
+                        // [Kolom 4] Aksi: rata tengah
+                        { "className": "text-center", "targets": 4 }
+                    ]
                 });
                 $('#table-container').fadeIn();
             })
