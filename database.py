@@ -1,6 +1,7 @@
 import mysql.connector
 from config import DB_HOST, DB_USER, DB_PASS, DB_NAME
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+import os
 
 def get_db():
     """Membuat koneksi ke database."""
@@ -342,3 +343,75 @@ def get_recent_events(limit=5):
     c.close()
     conn.close()
     return events
+
+# --- FUNGSI BARU UNTUK CLEANUP ---
+
+def cleanup_old_events_and_images(days_to_keep):
+    """
+    Menghapus event dari DB dan file gambar terkait yang lebih tua dari days_to_keep.
+    Juga mencoba menghapus folder tanggal/perangkat yang kosong.
+    """
+    conn = get_db()
+    c = conn.cursor(dictionary=True)
+    
+    cutoff_date = date.today() - timedelta(days=days_to_keep)
+    cutoff_date_str = cutoff_date.strftime('%Y-%m-%d')
+    
+    deleted_files = 0
+    deleted_rows = 0
+    empty_dirs_to_check = set()
+
+    try:
+        # 1. Ambil path gambar yang akan dihapus
+        c.execute(
+            "SELECT id, localImagePath FROM events WHERE STR_TO_DATE(date, '%Y-%m-%d') < %s AND localImagePath IS NOT NULL", 
+            (cutoff_date_str,)
+        )
+        events_to_delete = c.fetchall()
+        
+        # 2. Hapus file gambar dari disk
+        for event in events_to_delete:
+            try:
+                # Path di DB: 'images/DEVICE_NAME/YYYY-MM-DD/file.jpg'
+                # Path di disk: 'static/images/DEVICE_NAME/YYYY-MM-DD/file.jpg'
+                full_path = os.path.join("static", event['localImagePath'])
+                if os.path.exists(full_path):
+                    os.remove(full_path)
+                    deleted_files += 1
+                    # Kumpulkan folder induk (folder tanggal) untuk dicek nanti
+                    empty_dirs_to_check.add(os.path.dirname(full_path))
+            except Exception as e:
+                print(f"[CLEANUP_WARN] Gagal menghapus file {event['localImagePath']}: {e}")
+        
+        # 3. Hapus event dari database
+        c.execute(
+            "DELETE FROM events WHERE STR_TO_DATE(date, '%Y-%m-%d') < %s",
+            (cutoff_date_str,)
+        )
+        deleted_rows = c.rowcount
+        
+        # 4. Coba hapus folder-folder kosong
+        for dir_path in empty_dirs_to_check:
+            try:
+                # Coba hapus folder tanggal (e.g., .../2025-01-01)
+                if os.path.isdir(dir_path) and not os.listdir(dir_path):
+                    os.rmdir(dir_path)
+                    
+                    # Coba hapus folder device (e.g., .../DEVICE_NAME)
+                    parent_dir = os.path.dirname(dir_path)
+                    if os.path.isdir(parent_dir) and not os.listdir(parent_dir):
+                        # Pastikan kita tidak menghapus 'static/images'
+                        safe_base_path = os.path.abspath(os.path.join("static", "images"))
+                        if os.path.abspath(parent_dir).startswith(safe_base_path) and os.path.abspath(parent_dir) != safe_base_path:
+                            os.rmdir(parent_dir)
+                            
+            except Exception as e:
+                print(f"[CLEANUP_WARN] Gagal menghapus folder kosong {dir_path}: {e}")
+
+    except Exception as e:
+        print(f"[CLEANUP_ERROR] Error saat cleanup database: {e}")
+    finally:
+        c.close()
+        conn.close()
+        
+    return deleted_rows, deleted_files

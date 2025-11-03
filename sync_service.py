@@ -12,6 +12,7 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import random
+import shutil
 
 # Impor konfigurasi (termasuk EVENT_MAP) dan modul database kustom
 from config import *
@@ -101,6 +102,42 @@ def log_raw_event(device, event):
         "name": event.get("name"),
     }
     logger.info(json.dumps(log_data))
+
+# --- FUNGSI BARU UNTUK CLEANUP LOG ---
+def cleanup_old_logs(days_to_keep):
+    """Menghapus folder log yang lebih tua dari days_to_keep."""
+    # Tentukan tanggal batas (cutoff)
+    cutoff_date = datetime.datetime.now() - datetime.timedelta(days=days_to_keep)
+    # Ambil direktori log dari config
+    log_dirs = [EVENT_LOG_DIR, SERVICE_LOG_DIR]
+    
+    deleted_folders = 0
+    for log_dir in log_dirs:
+        if not os.path.isdir(log_dir):
+            continue
+        
+        # Iterasi setiap item di dalam folder log (e.g., 'event_logs' atau 'service_logs')
+        for date_folder_name in os.listdir(log_dir):
+            full_folder_path = os.path.join(log_dir, date_folder_name)
+            
+            # Pastikan itu adalah direktori
+            if not os.path.isdir(full_folder_path):
+                continue
+            
+            try:
+                # Nama folder log adalah 'YYYY-MM-DD'
+                folder_date = datetime.datetime.strptime(date_folder_name, '%Y-%m-%d')
+                
+                # Jika tanggal folder lebih tua dari tanggal batas, hapus
+                if folder_date < cutoff_date:
+                    shutil.rmtree(full_folder_path)
+                    deleted_folders += 1
+            except (ValueError, OSError) as e:
+                # ValueError jika nama folder bukan format tanggal
+                # OSError jika gagal menghapus folder
+                log_system(f"Gagal memproses/menghapus folder log {full_folder_path}: {e}", level="WARN")
+                
+    return deleted_folders
 # --- AKHIR SETUP LOGGING ---
 
 # --- Variabel Global & Kunci Thread ---
@@ -399,19 +436,47 @@ def process_device(device):
         set_device_status(ip, "error")
 # ----------------------------------------------------
 
-# --- MAIN LOOP (Tidak Berubah) ---
+# --- MAIN LOOP (DIMODIFIKASI DENGAN CLEANUP) ---
 def main_sync():
     db.init_db()
     log_system("Memulai Sinkronisasi Event Hikvision (Mode Multi-Thread)...")
+    
+    # Tambahkan variabel untuk melacak waktu cleanup
+    # Set ke kemarin agar langsung jalan saat pertama kali service start
+    last_cleanup_time = datetime.datetime.now() - datetime.timedelta(days=1) 
+    
     try:
         while True:
+            
+            # --- Bagian Baru: Jalankan Cleanup Harian ---
+            # Cek apakah sudah 24 jam (3600 * 24 = 86400 detik)
+            if (datetime.datetime.now() - last_cleanup_time).total_seconds() > 86400:
+                log_system("Menjalankan tugas cleanup harian (data > 60 hari)...")
+                try:
+                    # 1. Panggil fungsi cleanup log
+                    deleted_log_folders = cleanup_old_logs(60)
+                    log_system(f"Cleanup log selesai. {deleted_log_folders} folder log lama dihapus.")
+                    
+                    # 2. Panggil fungsi cleanup database & gambar
+                    deleted_rows, deleted_files = db.cleanup_old_events_and_images(60)
+                    log_system(f"Cleanup DB & gambar selesai. {deleted_rows} baris event dan {deleted_files} file gambar dihapus.")
+                    
+                    log_system("Tugas cleanup harian selesai.")
+                    last_cleanup_time = datetime.datetime.now() # Reset timer
+                except Exception as e:
+                    log_system(f"Error saat menjalankan cleanup harian: {e}", level="ERROR")
+            # --- Akhir Bagian Baru ---
+
+            
             devices = db.get_all_devices()
             if not devices:
                 log_system("Tidak ada device yang terdaftar. Menunggu 15 detik..."), time.sleep(15)
                 continue
             with ThreadPoolExecutor(max_workers=len(devices)) as executor:
                 executor.map(process_device, devices)
-            time.sleep(POLL_INTERVAL)
+            
+            time.sleep(POLL_INTERVAL) # Waktu poll interval yang ada
+            
     except KeyboardInterrupt:
         log_system("Sinkronisasi dihentikan oleh pengguna.")
     except Exception as e:
