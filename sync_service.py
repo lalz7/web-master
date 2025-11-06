@@ -205,26 +205,61 @@ def event_exists(eventId, device_name):
     return exists
 # ----------------------------------------------------
 
-# --- FUNGSI API (Tidak Berubah) ---
-def send_event_to_api(event_data, device, user, password, db_event_id):
+# --- FUNGSI API & PROSES EVENT (DIMODIFIKASI) ---
+
+def download_image_with_retry(device, pictureURL, auth, max_retries=5, delay=2):
+    """
+    Mencoba mengunduh gambar dengan 5 kali percobaan.
+    Menggunakan auth (HTTPDigestAuth) yang sama dengan request lainnya.
+    """
+    if not pictureURL:
+        log(device, "URL Gambar kosong, download dilewati.", level="WARN")
+        return None
+        
+    for attempt in range(1, max_retries + 1):
+        try:
+            r_img = requests.get(pictureURL, auth=auth, timeout=REQUEST_TIMEOUT)
+            if r_img.status_code == 200:
+                return r_img.content  # Sukses, kembalikan konten mentah (bytes)
+            
+            log(device, f"[Attempt {attempt}/{max_retries}] Gagal mendapatkan gambar (HTTP {r_img.status_code}). URL: {pictureURL}", level="WARN")
+        
+        except requests.exceptions.RequestException as e:
+            log(device, f"[Attempt {attempt}/{max_retries}] Error koneksi saat mengambil gambar: {e}", level="WARN")
+        
+        if attempt < max_retries:
+            time.sleep(delay) # Tunggu sebelum mencoba lagi
+    
+    log(device, f"Gagal mengunduh gambar setelah {max_retries} percobaan. URL: {pictureURL}", level="ERROR")
+    return None # Gagal setelah semua percobaan
+
+def send_event_to_api(event_data, device, user, password, db_event_id, image_content, max_retries=5, delay=2):
+    """
+    Mengirim event ke API target dengan 5 kali percobaan.
+    Fungsi ini TIDAK LAGI mengunduh gambar, tapi menerimanya sebagai 'image_content'.
+    """
     target_api = device.get('targetApi')
     if not target_api:
         log(device, "Target API tidak diatur, pengiriman dilewati."), update_api_status(db_event_id, "skipped_no_api")
         return
+        
     if not event_data.get("employeeId"):
         log(device, "Event tanpa employeeId, pengiriman ke API dilewati."), update_api_status(db_event_id, "skipped")
         return
-    try:
-        r_img = requests.get(event_data["pictureURL"], auth=HTTPDigestAuth(user, password), timeout=REQUEST_TIMEOUT)
-        if r_img.status_code == 200:
-            image_base64 = base64.b64encode(r_img.content).decode('utf-8')
-            image_status_msg = f"Terkirim ({len(r_img.content) // 1024} KB)"
-        else:
-            log(device, f"Gagal mendapatkan gambar (HTTP {r_img.status_code}).", level="WARN"), update_api_status(db_event_id, "failed")
-            return
-    except Exception as e:
-        log(device, f"Error koneksi saat mengambil gambar: {e}", level="ERROR"), update_api_status(db_event_id, "failed")
+        
+    if not image_content:
+        log(device, f"send_event_to_api dipanggil tanpa image_content (ID: {db_event_id}), menandai gagal.", level="ERROR")
+        update_api_status(db_event_id, "failed")
         return
+        
+    try:
+        image_base64 = base64.b64encode(image_content).decode('utf-8')
+        image_status_msg = f"Terkirim ({len(image_content) // 1024} KB)"
+    except Exception as e:
+        log(device, f"Gagal encode base64 untuk event {db_event_id}: {e}", level="ERROR")
+        update_api_status(db_event_id, "failed")
+        return
+
     payload = {
         "device": event_data["deviceName"],
         "authId": event_data["employeeId"],
@@ -232,28 +267,45 @@ def send_event_to_api(event_data, device, user, password, db_event_id):
         "picture": image_base64
     }
     
-    log(device, f"Mengirim ke '{target_api}' -> authId: {payload['authId']}, device: '{payload['device']}', date: {payload['date']}, image: {image_status_msg}")
-    try:
-        r_api = requests.post(target_api, json=payload, timeout=REQUEST_TIMEOUT)
-        status_code = r_api.status_code
-        response_details = ""
+    log(device, f"Mengirim ke '{target_api}' -> authId: {payload['authId']}, image: {image_status_msg}")
+    
+    # --- MULAI RETRY LOOP UNTUK KIRIM API ---
+    for attempt in range(1, max_retries + 1):
         try:
-            json_data = r_api.json()
-            attendance_obj = json_data.get('attendance', {})
-            received_auth_id = attendance_obj.get('student_id', 'N/A') if attendance_obj else 'N/A'
-            received_device = attendance_obj.get('device', 'N/A') if attendance_obj else 'N/A'
-            received_date = attendance_obj.get('date', 'N/A') if attendance_obj else 'N/A'
-            response_status = json_data.get('status', 'N/A')
-            response_details = (f"authId: {received_auth_id}, device: '{received_device}', date: {received_date}, status: {response_status}")
-        except (json.JSONDecodeError, ValueError):
-            response_details = f"Status Code [{status_code}], Body: {r_api.text[:100]}..."
+            r_api = requests.post(target_api, json=payload, timeout=REQUEST_TIMEOUT)
+            status_code = r_api.status_code
+            response_details = ""
+            
+            try:
+                json_data = r_api.json()
+                attendance_obj = json_data.get('attendance', {})
+                received_auth_id = attendance_obj.get('student_id', 'N/A') if attendance_obj else 'N/A'
+                received_device = attendance_obj.get('device', 'N/A') if attendance_obj else 'N/A'
+                received_date = attendance_obj.get('date', 'N/A') if attendance_obj else 'N/A'
+                response_status = json_data.get('status', 'N/A')
+                response_details = (f"authId: {received_auth_id}, device: '{received_device}', date: {received_date}, status: {response_status}")
+            except (json.JSONDecodeError, ValueError):
+                response_details = f"Status Code [{status_code}], Body: {r_api.text[:100]}..."
 
-        log_level = "INFO" if status_code in [200, 201] else "ERROR"
-        log(device, f"Respons API <- {response_details}", level=log_level)
-        update_api_status(db_event_id, "success" if status_code in [200, 201] else "failed")
-    except requests.exceptions.RequestException as e:
-        log(device, f"Gagal koneksi ke API: {e}", level="ERROR")
-        update_api_status(db_event_id, "failed")
+            # Periksa status sukses (200 atau 201)
+            if status_code in [200, 201]:
+                log(device, f"Respons API (Sukses) <- {response_details}", level="INFO")
+                update_api_status(db_event_id, "success")
+                return # <-- SUKSES, keluar dari fungsi
+
+            # Jika status tidak sukses, log sebagai error dan biarkan loop berlanjut (retry)
+            log(device, f"[Attempt {attempt}/{max_retries}] Respons API (Gagal) <- {response_details}", level="ERROR")
+
+        except requests.exceptions.RequestException as e:
+            # Jika terjadi error koneksi, log dan biarkan loop berlanjut (retry)
+            log(device, f"[Attempt {attempt}/{max_retries}] Gagal koneksi ke API: {e}", level="ERROR")
+        
+        if attempt < max_retries:
+            time.sleep(delay) # Tunggu sebelum mencoba lagi
+    
+    # --- Jika loop selesai tanpa 'return', berarti GAGAL 5 KALI ---
+    log(device, f"Gagal mengirim event (ID: {db_event_id}) ke API setelah {max_retries} percobaan.", level="ERROR")
+    update_api_status(db_event_id, "failed")
 # ----------------------------------------------------
 
 # --- HIKVISION & EVENT PROCESSING ---
@@ -279,8 +331,16 @@ def get_event_desc(event):
     return EVENT_MAP.get((major, minor))
 
 def save_event(event, device):
-    # Fungsi ini sekarang hanya fokus pada penyimpanan ke DB
+    """
+    Fungsi ini sekarang menangani alur:
+    1. Download gambar (dengan retry 5x).
+    2. Simpan gambar ke disk (jika berhasil).
+    3. Simpan event ke DB (dengan status API yang sesuai).
+    4. Panggil 'send_event_to_api' (yang punya retry 5x) HANYA jika gambar berhasil di-download.
+    """
     user, password = device.get("username"), device.get("password")
+    auth = HTTPDigestAuth(user, password)
+    
     eventId, device_name, pictureURL = event.get("serialNo"), device_label(device), event.get("pictureURL")
     name = event.get("name") or "unknown"
     
@@ -295,24 +355,40 @@ def save_event(event, device):
     employee_id = int(event["employeeNoString"]) if event.get("employeeNoString", "").isdigit() else None
     
     is_valid_for_api = (event_desc == "Face Recognized")
-    initial_api_status = 'pending' if is_valid_for_api else 'skipped'
     
     local_image_path = None
-    if dt:
+    image_content = None
+
+    # Langkah 1: Coba download gambar (hanya jika event valid dan punya URL)
+    if dt and pictureURL and is_valid_for_api:
+        image_content = download_image_with_retry(device, pictureURL, auth)
+    
+    # Langkah 2: Jika download berhasil, simpan ke disk
+    if image_content:
         try:
             safe_dev = sanitize_name(device_name)
             date_folder = dt.strftime("%Y-%m-%d")
             relative_folder = os.path.join("images", safe_dev, date_folder)
             absolute_folder = os.path.join("static", relative_folder)
             os.makedirs(absolute_folder, exist_ok=True)
-            r_img = requests.get(pictureURL, auth=HTTPDigestAuth(user, password), timeout=REQUEST_TIMEOUT)
-            if r_img.status_code == 200:
-                file_name = f"{sanitize_name(name)}-{eventId}.jpg"
-                local_image_path = os.path.join(relative_folder, file_name).replace("\\", "/")
-                with open(os.path.join(absolute_folder, file_name), "wb") as f: f.write(r_img.content)
+            file_name = f"{sanitize_name(name)}-{eventId}.jpg"
+            local_image_path = os.path.join(relative_folder, file_name).replace("\\", "/")
+            with open(os.path.join(absolute_folder, file_name), "wb") as f:
+                f.write(image_content)
         except Exception as e:
-            log(device, f"Error download gambar (ID: {eventId}): {e}", level="WARN")
+            log(device, f"Error simpan gambar ke disk (ID: {eventId}): {e}", level="WARN")
+            local_image_path = None # Gagal simpan, tapi kita masih punya kontennya di 'image_content'
+            
+    # Langkah 3: Tentukan status API awal berdasarkan hasil download
+    if is_valid_for_api:
+        if image_content:
+            initial_api_status = 'pending' # Siap dikirim
+        else:
+            initial_api_status = 'failed' # Gagal dikirim karena gambar tidak ada
+    else:
+        initial_api_status = 'skipped' # Bukan event untuk API
 
+    # Langkah 4: Simpan event ke database
     conn, c, db_event_id = db.get_db(), None, None
     try:
         c = conn.cursor()
@@ -321,9 +397,12 @@ def save_event(event, device):
         c.execute(sql, values)
         db_event_id = c.lastrowid
         
-        if db_event_id and is_valid_for_api:
+        # Langkah 5: Panggil API HANYA jika event valid DAN gambar berhasil di-download
+        if db_event_id and is_valid_for_api and image_content:
             api_data = {"deviceName": device_name, "employeeId": employee_id, "pictureURL": pictureURL, "datetime_obj": dt, "eventId": eventId}
-            send_event_to_api(api_data, device, user, password, db_event_id)
+            # Panggil send_event_to_api (yang sekarang memiliki retry 5x)
+            send_event_to_api(api_data, device, user, password, db_event_id, image_content)
+        
         return True
     except mysql.connector.IntegrityError:
         log(device, f"Info: Event (ID: {eventId}) sudah ada di database, dilewati.")
@@ -415,12 +494,12 @@ def process_device(device):
                 except Exception:
                     log(device, f"Memproses event (ID: {e.get('serialNo')}) untuk '{e.get('name')}'...")
 
-                # Langkah 4: Coba simpan ke database
+                # Langkah 4: Coba simpan ke database (fungsi ini sekarang juga menangani download & API)
                 if save_event(e, device):
                     saved_count += 1
         
         if saved_count > 0:
-            log(device, f"Selesai, total {saved_count} event baru berhasil disimpan ke database.")
+            log(device, f"Selesai, total {saved_count} event baru diproses untuk disimpan ke database.")
         
         newest_event = new_events[-1]
         newest_event_id = int(newest_event.get("serialNo") or 0)
