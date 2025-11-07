@@ -2,6 +2,7 @@ import mysql.connector
 from config import DB_HOST, DB_USER, DB_PASS, DB_NAME
 from datetime import datetime, date, timedelta
 import os
+from werkzeug.security import generate_password_hash, check_password_hash
 
 def get_db():
     """Membuat koneksi ke database."""
@@ -38,7 +39,45 @@ def init_db():
             is_active BOOLEAN DEFAULT TRUE
         )
     """)
-    # Migrasi: Tambahkan kolom yang mungkin belum ada
+    
+    # --- TABEL BARU: USERS ---
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(80) UNIQUE NOT NULL,
+            password_hash VARCHAR(255) NOT NULL
+        )
+    """)
+    
+    # --- TABEL BARU: SETTINGS ---
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            setting_key VARCHAR(50) PRIMARY KEY,
+            setting_value VARCHAR(255) NOT NULL
+        )
+    """)
+
+    # --- Inisialisasi Data Default (Hanya jika kosong) ---
+    
+    # Buat admin user default jika tabel user baru saja dibuat
+    c.execute("SELECT COUNT(*) FROM users")
+    if c.fetchone()[0] == 0:
+        default_pass = generate_password_hash('bukalah123')
+        c.execute("INSERT INTO users (username, password_hash) VALUES (%s, %s)", ('admin', default_pass))
+
+    # Buat pengaturan default jika tabel settings baru saja dibuat
+    c.execute("SELECT COUNT(*) FROM settings")
+    if c.fetchone()[0] == 0:
+        c.execute("INSERT INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('cleanup_days', '60'))
+        
+        # --- TAMBAHAN PENGATURAN WA ---
+        # (Akan diabaikan jika 'cleanup_days' sudah ada)
+        c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_enabled', 'false'))
+        c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_target_number', ''))
+        c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_api_url', 'http://10.1.105.164:60001'))
+        # -------------------------------
+
+    # Migrasi (tetap ada untuk instalasi lama)
     try:
         c.execute("ALTER TABLE devices ADD COLUMN username VARCHAR(255) NULL")
         c.execute("ALTER TABLE devices ADD COLUMN password VARCHAR(255) NULL")
@@ -46,12 +85,86 @@ def init_db():
     try:
         c.execute("ALTER TABLE devices ADD COLUMN is_active BOOLEAN DEFAULT TRUE")
     except mysql.connector.Error: pass
+    
+    # Migrasi: Tambahkan pengaturan WA jika tabel settings sudah ada tapi pengaturan WA belum
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_enabled', 'false'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_target_number', ''))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_api_url', 'http://10.1.105.164:60001'))
+
 
     c.close()
     conn.close()
 
+# --- FUNGSI BARU: PENGATURAN (SETTINGS) ---
+
+def get_setting(key, default=None):
+    """Mengambil nilai pengaturan dari database."""
+    conn = get_db()
+    c = conn.cursor(dictionary=True)
+    c.execute("SELECT setting_value FROM settings WHERE setting_key = %s", (key,))
+    result = c.fetchone()
+    c.close()
+    conn.close()
+    if result:
+        return result['setting_value']
+    return default
+
+def update_setting(key, value):
+    """Memperbarui nilai pengaturan di database."""
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        # Coba update dulu, jika gagal (tidak ada), baru insert
+        c.execute("UPDATE settings SET setting_value = %s WHERE setting_key = %s", (value, key))
+        if c.rowcount == 0:
+            c.execute("INSERT INTO settings (setting_key, setting_value) VALUES (%s, %s)", (key, value))
+        return True
+    except Exception as e:
+        print(f"Error updating setting: {e}")
+        return False
+    finally:
+        c.close()
+        conn.close()
+
+# --- FUNGSI BARU: AUTENTIKASI ---
+
+def get_user_by_username(username):
+    """Mengambil data user berdasarkan username."""
+    conn = get_db()
+    c = conn.cursor(dictionary=True)
+    c.execute("SELECT * FROM users WHERE username = %s", (username,))
+    user = c.fetchone()
+    c.close()
+    conn.close()
+    return user
+
+def get_user_by_id(user_id):
+    """Mengambil data user berdasarkan ID."""
+    conn = get_db()
+    c = conn.cursor(dictionary=True)
+    c.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+    user = c.fetchone()
+    c.close()
+    conn.close()
+    return user
+
+def update_user_password(user_id, new_password_hash):
+    """Memperbarui password hash user."""
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("UPDATE users SET password_hash = %s WHERE id = %s", (new_password_hash, user_id))
+        return True
+    except Exception as e:
+        print(f"Error updating password: {e}")
+        return False
+    finally:
+        c.close()
+        conn.close()
+
+# --- FUNGSI DEVICE (TETAP SAMA) ---
+
 def get_device_by_ip(ip):
-    """Mengambil detail satu perangkat berdasarkan IP."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
     c.execute("SELECT * FROM devices WHERE ip = %s", (ip,))
@@ -61,7 +174,6 @@ def get_device_by_ip(ip):
     return device
 
 def get_all_devices():
-    """Mengambil SEMUA PERANGKAT AKTIF untuk layanan sinkronisasi."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
     c.execute("SELECT * FROM devices WHERE is_active = TRUE ORDER BY name")
@@ -71,7 +183,6 @@ def get_all_devices():
     return rows
 
 def get_all_devices_for_ui():
-    """Mengambil SEMUA perangkat (aktif dan nonaktif) untuk ditampilkan di UI."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
     c.execute("SELECT * FROM devices ORDER BY is_active DESC, ip ASC")
@@ -81,7 +192,6 @@ def get_all_devices_for_ui():
     return rows
 
 def toggle_device_active_state(ip):
-    """Mengubah status aktif/nonaktif sebuah perangkat."""
     conn = get_db()
     c = conn.cursor()
     try:
@@ -92,7 +202,6 @@ def toggle_device_active_state(ip):
         conn.close()
 
 def get_all_unique_locations():
-    """Mengambil semua lokasi unik dari tabel devices untuk filter dropdown."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
     c.execute("SELECT DISTINCT location FROM devices WHERE location IS NOT NULL AND location != '' AND is_active = TRUE ORDER BY location")
@@ -101,21 +210,77 @@ def get_all_unique_locations():
     conn.close()
     return locations
 
+def add_device(ip, name, location, target_api, username, password):
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO devices (ip, name, location, targetApi, username, password, status) VALUES (%s, %s, %s, %s, %s, %s, 'new')",
+                  (ip, name, location, target_api, username, password))
+        return True, "Perangkat berhasil ditambahkan."
+    except mysql.connector.IntegrityError:
+        return False, "Perangkat dengan IP tersebut sudah ada."
+    finally:
+        c.close()
+        conn.close()
+
+def update_device(original_ip, name, location, target_api, username, password):
+    conn = get_db()
+    c = conn.cursor()
+    if password:
+        query = "UPDATE devices SET name=%s, location=%s, targetApi=%s, username=%s, password=%s WHERE ip=%s"
+        values = (name, location, target_api, username, password, original_ip)
+    else:
+        query = "UPDATE devices SET name=%s, location=%s, targetApi=%s, username=%s WHERE ip=%s"
+        values = (name, location, target_api, username, original_ip)
+    c.execute(query, values)
+    affected = c.rowcount
+    c.close()
+    conn.close()
+    return affected > 0
+
+def delete_device(ip):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("DELETE FROM devices WHERE ip=%s", (ip,))
+    affected = c.rowcount
+    c.close()
+    conn.close()
+    return affected > 0
+
+def update_device_ping_status(ip: str, status: str):
+    conn = get_db()
+    c = conn.cursor()
+    query = "UPDATE devices SET status=%s WHERE ip=%s"
+    c.execute(query, (status, ip))
+    c.close()
+    conn.close()
+
+def get_devices_status():
+    conn = get_db()
+    c = conn.cursor(dictionary=True)
+    c.execute("SELECT ip, name, location, status, lastSync FROM devices WHERE is_active = TRUE ORDER BY name")
+    rows = c.fetchall()
+    c.close()
+    conn.close()
+    result = []
+    for row in rows:
+        last_sync = row['lastSync']
+        row['lastSync'] = last_sync.strftime('%d-%m-%Y %H:%M:%S') if last_sync else 'Belum pernah'
+        result.append(row)
+    return result
+
+# --- FUNGSI EVENT & STATISTIK ---
+
 def get_events(**filters):
     """Mengambil SEMUA event yang cocok dengan filter, TANPA PAGINASI."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
-
-    select_clause = """
-        SELECT
-            events.id, events.deviceName, devices.location, events.employeeId, events.name,
-            DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date,
-            events.time, events.eventDesc, events.pictureURL, events.localImagePath,
-            events.syncType, events.apiStatus
-    """
-    base_sql = "FROM events JOIN devices ON events.deviceName = devices.name"
+    
+    # PERBAIKAN SQL (SPASI)
+    select_clause = "SELECT events.id, events.deviceName, devices.location, events.employeeId, events.name, DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date, events.time, events.eventDesc, events.pictureURL, events.localImagePath, events.syncType, events.apiStatus"
+    base_sql = " FROM events JOIN devices ON events.deviceName = devices.name" # <-- SPASI SUDAH ADA DI SINI
+    
     where_clauses, values = [], []
-
     where_clauses.append("devices.is_active = TRUE")
 
     if filters.get('device'):
@@ -149,22 +314,13 @@ def get_event_by_id(event_id):
     """Mengambil SEMUA detail event (termasuk lokasi) untuk pop-up."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
-    query = """
-        SELECT
-            events.id, events.deviceName, devices.ip, devices.location, events.employeeId, events.name,
-            DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date,
-            events.time, events.eventDesc, events.pictureURL, events.localImagePath,
-            events.syncType, events.apiStatus
-        FROM events JOIN devices ON events.deviceName = devices.name
-        WHERE events.id = %s
-    """
+    query = "SELECT events.id, events.deviceName, devices.ip, devices.location, events.employeeId, events.name, DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date, events.time, events.eventDesc, events.pictureURL, events.localImagePath, events.syncType, events.apiStatus FROM events JOIN devices ON events.deviceName = devices.name WHERE events.id = %s"
     c.execute(query, (event_id,))
     event = c.fetchone()
     c.close()
     conn.close()
     return event
 
-# --- FUNGSI BARU ---
 def get_earliest_attendance_by_date(employee_ids, target_date, device_name):
     """
     Mengambil jam absen terawal untuk daftar employee_id pada tanggal DAN perangkat tertentu.
@@ -176,7 +332,6 @@ def get_earliest_attendance_by_date(employee_ids, target_date, device_name):
     conn = get_db()
     c = conn.cursor(dictionary=True)
     
-    # Membuat placeholder untuk query IN (...)
     format_strings = ','.join(['%s'] * len(employee_ids))
     
     query = f"""
@@ -190,7 +345,6 @@ def get_earliest_attendance_by_date(employee_ids, target_date, device_name):
         GROUP BY employeeId
     """
     
-    # Gabungkan parameter (device_name ditambahkan setelah target_date)
     params = [target_date, device_name] + employee_ids
     
     c.execute(query, tuple(params))
@@ -198,22 +352,13 @@ def get_earliest_attendance_by_date(employee_ids, target_date, device_name):
     c.close()
     conn.close()
     
-    # Ubah hasil query menjadi dictionary {employeeId: 'HH:MM:SS'}
     return {row['employeeId']: row['earliest_time'] for row in results}
-# --------------------
 
 def get_events_by_date(target_date, location=None, ip=None):
     """Mengambil event berdasarkan tanggal dengan urutan field yang rapi untuk API."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
-    base_query = """
-        SELECT
-            events.id, DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date, events.time,
-            events.name, events.employeeId, events.deviceName, devices.ip, devices.location,
-            events.eventDesc, events.syncType, events.apiStatus, events.pictureURL, events.localImagePath
-        FROM events JOIN devices ON events.deviceName = devices.name
-        WHERE events.date = %s AND devices.is_active = TRUE
-    """
+    base_query = "SELECT events.id, DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date, events.time, events.name, events.employeeId, events.deviceName, devices.ip, devices.location, events.eventDesc, events.syncType, events.apiStatus, events.pictureURL, events.localImagePath FROM events JOIN devices ON events.deviceName = devices.name WHERE events.date = %s AND devices.is_active = TRUE"
     values = [target_date]
     if location:
         base_query += " AND devices.location = %s"
@@ -228,72 +373,7 @@ def get_events_by_date(target_date, location=None, ip=None):
     conn.close()
     return events
 
-def add_device(ip, name, location, target_api, username, password):
-    """Menambahkan perangkat baru ke database."""
-    conn = get_db()
-    c = conn.cursor()
-    try:
-        c.execute("INSERT INTO devices (ip, name, location, targetApi, username, password, status) VALUES (%s, %s, %s, %s, %s, %s, 'new')",
-                  (ip, name, location, target_api, username, password))
-        return True, "Perangkat berhasil ditambahkan."
-    except mysql.connector.IntegrityError:
-        return False, "Perangkat dengan IP tersebut sudah ada."
-    finally:
-        c.close()
-        conn.close()
-
-def update_device(original_ip, name, location, target_api, username, password):
-    """Memperbarui data perangkat di database."""
-    conn = get_db()
-    c = conn.cursor()
-    # Hanya update password jika diisi, jika tidak, pertahankan yang lama
-    if password:
-        query = "UPDATE devices SET name=%s, location=%s, targetApi=%s, username=%s, password=%s WHERE ip=%s"
-        values = (name, location, target_api, username, password, original_ip)
-    else:
-        query = "UPDATE devices SET name=%s, location=%s, targetApi=%s, username=%s WHERE ip=%s"
-        values = (name, location, target_api, username, original_ip)
-
-    c.execute(query, values)
-    affected = c.rowcount
-    c.close()
-    conn.close()
-    return affected > 0
-
-def delete_device(ip):
-    """Menghapus perangkat dari database."""
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("DELETE FROM devices WHERE ip=%s", (ip,))
-    affected = c.rowcount
-    c.close()
-    conn.close()
-    return affected > 0
-
-def update_device_ping_status(ip: str, status: str):
-    """Memperbarui status perangkat setelah ping (TANPA MENGUBAH lastSync)."""
-    conn = get_db()
-    c = conn.cursor()
-    query = "UPDATE devices SET status=%s WHERE ip=%s"
-    c.execute(query, (status, ip))
-    c.close()
-    conn.close()
-
-def get_devices_status():
-    """PERBAIKAN: Mengambil nama dan lokasi perangkat untuk polling AJAX di dasbor."""
-    conn = get_db()
-    c = conn.cursor(dictionary=True)
-    # Menambahkan 'name' dan 'location' ke query
-    c.execute("SELECT ip, name, location, status, lastSync FROM devices WHERE is_active = TRUE ORDER BY name")
-    rows = c.fetchall()
-    c.close()
-    conn.close()
-    result = []
-    for row in rows:
-        last_sync = row['lastSync']
-        row['lastSync'] = last_sync.strftime('%d-%m-%Y %H:%M:%S') if last_sync else 'Belum pernah'
-        result.append(row)
-    return result
+# --- FUNGSI-FUNGSI YANG HILANG SEBELUMNYA ---
 
 def get_dashboard_stats():
     """Mengambil data statistik ringkas untuk halaman dashboard."""
@@ -309,7 +389,7 @@ def get_dashboard_stats():
     today_str = date.today().strftime('%Y-%m-%d')
 
     filters_for_today = {'start_date': today_str, 'end_date': today_str}
-    events_today_list = get_events(**filters_for_today)
+    events_today_list = get_events(**filters_for_today) 
 
     events_today_count = len(events_today_list)
     failed_api_count = sum(1 for event in events_today_list if event.get('apiStatus') == 'failed')
@@ -344,8 +424,6 @@ def get_recent_events(limit=5):
     conn.close()
     return events
 
-# --- FUNGSI BARU UNTUK CLEANUP ---
-
 def cleanup_old_events_and_images(days_to_keep):
     """
     Menghapus event dari DB dan file gambar terkait yang lebih tua dari days_to_keep.
@@ -372,8 +450,6 @@ def cleanup_old_events_and_images(days_to_keep):
         # 2. Hapus file gambar dari disk
         for event in events_to_delete:
             try:
-                # Path di DB: 'images/DEVICE_NAME/YYYY-MM-DD/file.jpg'
-                # Path di disk: 'static/images/DEVICE_NAME/YYYY-MM-DD/file.jpg'
                 full_path = os.path.join("static", event['localImagePath'])
                 if os.path.exists(full_path):
                     os.remove(full_path)
@@ -393,18 +469,13 @@ def cleanup_old_events_and_images(days_to_keep):
         # 4. Coba hapus folder-folder kosong
         for dir_path in empty_dirs_to_check:
             try:
-                # Coba hapus folder tanggal (e.g., .../2025-01-01)
                 if os.path.isdir(dir_path) and not os.listdir(dir_path):
                     os.rmdir(dir_path)
-                    
-                    # Coba hapus folder device (e.g., .../DEVICE_NAME)
                     parent_dir = os.path.dirname(dir_path)
                     if os.path.isdir(parent_dir) and not os.listdir(parent_dir):
-                        # Pastikan kita tidak menghapus 'static/images'
                         safe_base_path = os.path.abspath(os.path.join("static", "images"))
                         if os.path.abspath(parent_dir).startswith(safe_base_path) and os.path.abspath(parent_dir) != safe_base_path:
                             os.rmdir(parent_dir)
-                            
             except Exception as e:
                 print(f"[CLEANUP_WARN] Gagal menghapus folder kosong {dir_path}: {e}")
 

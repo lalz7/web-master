@@ -1,0 +1,116 @@
+{% extends "layout.html" %}
+
+{% block title %}Pengaturan{% endblock %}
+
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        {% for category, message in messages %}
+            <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        {% endfor %}
+    {% endif %}
+{% endwith %}
+
+<div class="card">
+    <div class="card-header">
+        <ul class="nav nav-tabs card-header-tabs" id="settingsTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="security-tab" data-bs-toggle="tab" data-bs-target="#security-pane" type="button" role="tab" aria-controls="security-pane" aria-selected="true">
+                    <i class="fas fa-key me-2"></i>Keamanan
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="retention-tab" data-bs-toggle="tab" data-bs-target="#retention-pane" type="button" role="tab" aria-controls="retention-pane" aria-selected="false">
+                    <i class="fas fa-database me-2"></i>Database
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="notif-tab" data-bs-toggle="tab" data-bs-target="#notif-pane" type="button" role="tab" aria-controls="notif-pane" aria-selected="false">
+                    <i class="fab fa-whatsapp me-2"></i>Notifikasi
+                </button>
+            </li>
+        </ul>
+    </div>
+    <div class="card-body p-4">
+        <div class="tab-content" id="settingsTabsContent">
+            
+            <div class="tab-pane fade show active" id="security-pane" role="tabpanel" aria-labelledby="security-tab">
+                <h5 class="mb-4">Ubah Password Admin</h5>
+                <form action="{{ url_for('save_password_settings') }}" method="POST">
+                    <div class="mb-3">
+                        <label for="current_password" class="form-label">Password Saat Ini</label>
+                        <input type="password" class="form-control" id="current_password" name="current_password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="new_password" class="form-label">Password Baru</label>
+                        <input type="password" class="form-control" id="new_password" name="new_password" minlength="6" required>
+                        <div class="form-text">Minimal 6 karakter.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="confirm_password" class="form-label">Konfirmasi Password Baru</label>
+                        <input type="password" class="form-control" id="confirm_password" name="confirm_password" minlength="6" required>
+                    </div>
+                    <div class="text-end mt-4">
+                        <button type="submit" class="btn btn-primary">Simpan Password</button>
+                    </div>
+                </form>
+            </div>
+            
+            <div class="tab-pane fade" id="retention-pane" role="tabpanel" aria-labelledby="retention-tab">
+                <h5 class="mb-4">Pengaturan Database</h5>
+                <form action="{{ url_for('save_cleanup_settings') }}" method="POST">
+                    <div class="mb-3">
+                        <label for="cleanup_days" class="form-label">Durasi Penyimpanan Data (hari)</label>
+                        <input type="number" class="form-control" id="cleanup_days" name="cleanup_days" min="7" value="{{ settings.cleanup_days }}" required>
+                        <div class="form-text">
+                            Event, gambar, dan log yang lebih lama dari batas ini akan dihapus secara otomatis setiap hari. (Minimal 7 hari).
+                        </div>
+                    </div>
+                    <div class="text-end mt-4">
+                        <button type="submit" class="btn btn-primary">Simpan Pengaturan</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="tab-pane fade" id="notif-pane" role="tabpanel" aria-labelledby="notif-tab">
+                <h5 class="mb-4">Pengaturan Notifikasi WhatsApp</h5>
+                <p class="text-muted">
+                    Server API WA lokal Anda akan digunakan untuk mengirim peringatan perangkat offline.
+                </p>
+                <hr>
+                <form action="{{ url_for('save_notification_settings') }}" method="POST">
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="whatsapp_enabled" name="whatsapp_enabled" value="true" {% if settings.whatsapp_enabled == 'true' %}checked{% endif %}>
+                        <label class="form-check-label" for="whatsapp_enabled">Aktifkan Notifikasi Peringatan Offline</label>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="whatsapp_api_url" class="form-label">URL API WhatsApp Server</label>
+                        <input type="text" class="form-control" id="whatsapp_api_url" name="whatsapp_api_url" value="{{ settings.whatsapp_api_url }}" placeholder="http://10.1.105.164:60001">
+                        <div class="form-text">
+                            Alamat IP dan Port server WA lokal Anda.
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="whatsapp_target_number" class="form-label">Nomor WhatsApp Tujuan</label>
+                        <input type="text" class="form-control" id="whatsapp_target_number" name="whatsapp_target_number" value="{{ settings.whatsapp_target_number }}" placeholder="Contoh: 62812..., 62856...">
+                        <div class="form-text">
+                            Bisa diisi lebih dari satu. Pisahkan dengan **koma (,)**. <br>
+                            Contoh: <code>62812345,62856789</code>
+                        </div>
+                    </div>
+                    <div class="text-end mt-4">
+                        <button type="submit" class="btn btn-primary">Simpan Notifikasi</button>
+                    </div>
+                </form>
+            </div>
+
+        </div>
+    </div>
+</div>
+{% endblock %}

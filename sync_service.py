@@ -9,7 +9,7 @@ import re
 import base64
 import json
 import logging
-import threading
+import threading # <-- Diperlukan untuk notifikasi
 from concurrent.futures import ThreadPoolExecutor
 import random
 import shutil
@@ -106,9 +106,7 @@ def log_raw_event(device, event):
 # --- FUNGSI BARU UNTUK CLEANUP LOG ---
 def cleanup_old_logs(days_to_keep):
     """Menghapus folder log yang lebih tua dari days_to_keep."""
-    # Tentukan tanggal batas (cutoff)
     cutoff_date = datetime.datetime.now() - datetime.timedelta(days=days_to_keep)
-    # Ambil direktori log dari config
     log_dirs = [EVENT_LOG_DIR, SERVICE_LOG_DIR]
     
     deleted_folders = 0
@@ -116,25 +114,18 @@ def cleanup_old_logs(days_to_keep):
         if not os.path.isdir(log_dir):
             continue
         
-        # Iterasi setiap item di dalam folder log (e.g., 'event_logs' atau 'service_logs')
         for date_folder_name in os.listdir(log_dir):
             full_folder_path = os.path.join(log_dir, date_folder_name)
             
-            # Pastikan itu adalah direktori
             if not os.path.isdir(full_folder_path):
                 continue
             
             try:
-                # Nama folder log adalah 'YYYY-MM-DD'
                 folder_date = datetime.datetime.strptime(date_folder_name, '%Y-%m-%d')
-                
-                # Jika tanggal folder lebih tua dari tanggal batas, hapus
                 if folder_date < cutoff_date:
                     shutil.rmtree(full_folder_path)
                     deleted_folders += 1
             except (ValueError, OSError) as e:
-                # ValueError jika nama folder bukan format tanggal
-                # OSError jika gagal menghapus folder
                 log_system(f"Gagal memproses/menghapus folder log {full_folder_path}: {e}", level="WARN")
                 
     return deleted_folders
@@ -156,7 +147,90 @@ def device_label(device):
 
 def parse_iso_time(time_str):
     return datetime.datetime.fromisoformat(time_str.replace(TIMEZONE, ''))
+
+# --- FUNGSI HELPER BARU UNTUK HARI (WIB) ---
+def get_indonesian_month_name(now):
+    """Mengubah nomor bulan ke nama bulan Indonesia."""
+    months_map = {
+        1: 'Januari', 2: 'Februari', 3: 'Maret', 4: 'April', 5: 'Mei', 6: 'Juni',
+        7: 'Juli', 8: 'Agustus', 9: 'September', 10: 'Oktober', 11: 'November', 12: 'Desember'
+    }
+    return months_map.get(now.month, '')
 # ----------------------------------
+
+# --- FUNGSI NOTIFIKASI WHATSAPP (DIMODIFIKASI) ---
+
+def _send_wa_request(target_number, message_text, wa_api_url):
+    """Fungsi internal untuk mengirim request WA. Dijalankan di thread terpisah."""
+    try:
+        # 1. Validasi
+        if not wa_api_url or not target_number:
+            log_system(f"WA: URL API ({wa_api_url}) atau Nomor Tujuan ({target_number}) kosong.", level="WARN")
+            return
+
+        # 2. Tentukan Endpoint (sesuai Whatsapp.php)
+        endpoint = wa_api_url.rstrip('/') + "/kirim-pesan-gambar-caption"
+        
+        # 3. Buat Payload (sesuai Whatsapp.php API_TYPE_V2)
+        payload = {
+            'recipientId': target_number,
+            'recipient': target_number,
+            'message': message_text
+        }
+        
+        # 4. Kirim Request
+        response = requests.post(endpoint, data=payload, timeout=10)
+        
+        if response.status_code == 200:
+            log_system(f"WA: Notifikasi berhasil dikirim ke {target_number}.", level="INFO")
+        else:
+            log_system(f"WA: Gagal mengirim notifikasi ke {target_number} (Status: {response.status_code}). Response: {response.text[:100]}", level="ERROR")
+            
+    except requests.exceptions.RequestException as e:
+        log_system(f"WA: Gagal koneksi ke server WhatsApp API ({wa_api_url}). Error: {e}", level="ERROR")
+    except Exception as e:
+        log_system(f"WA: Terjadi error tidak terduga saat mengirim ke {target_number}. Error: {e}", level="ERROR")
+
+def send_whatsapp_notification(message_text):
+    """
+    Mengirim notifikasi WhatsApp ke SEMUA nomor yang terdaftar di thread terpisah.
+    """
+    try:
+        # 1. Ambil pengaturan dari DB
+        wa_enabled = db.get_setting('whatsapp_enabled', 'false')
+        if wa_enabled != 'true':
+            # log_system("WA: Notifikasi dinonaktifkan di Pengaturan.", level="INFO") # Terlalu berisik untuk di-log
+            return
+
+        wa_api_url = db.get_setting('whatsapp_api_url')
+        number_string = db.get_setting('whatsapp_target_number', '')
+        
+        if not number_string:
+             log_system("WA: Gagal mengirim, tidak ada nomor tujuan yang diatur.", level="WARN")
+             return
+        
+        if not wa_api_url:
+             log_system(f"WA: Gagal mengirim ke '{number_string}', URL API belum diatur.", level="WARN")
+             return
+        
+        # 2. Pisahkan nomor dan kirim ke masing-masing
+        numbers = number_string.split(',')
+        
+        log_system(f"WA: Mempersiapkan notifikasi ke {len(numbers)} nomor...", level="INFO")
+
+        for num in numbers:
+            num = num.strip() # Bersihkan spasi
+            if num.startswith('62') and num[2:].isdigit():
+                # Buat dan jalankan thread untuk SETIAP nomor
+                t = threading.Thread(target=_send_wa_request, args=(num, message_text, wa_api_url))
+                t.daemon = True
+                t.start()
+            elif num: # Jika tidak kosong tapi format salah
+                log_system(f"WA: Melewatkan nomor '{num}', format salah (harus 62...).", level="WARN")
+        
+    except Exception as e:
+        log_system(f"WA: Gagal memulai thread notifikasi. Error: {e}", level="ERROR")
+
 
 # --- FUNGSI DATABASE (Spesifik untuk service ini) ---
 def set_last_sync_time(ip, time_iso_str):
@@ -415,7 +489,7 @@ def save_event(event, device):
         conn.close()
 # ----------------------------------------------------
 
-# --- PING & WORKER ---
+# --- PING & WORKER (DIMODIFIKASI UNTUK NOTIFIKASI) ---
 def ping_device_os(ip):
     param = "-n 1 -w 1000" if platform.system().lower() == "windows" else "-c 1 -W 1"
     cmd = f"ping {param} {ip}"
@@ -426,8 +500,10 @@ def process_device(device):
     if not all([device.get("username"), device.get("password")]):
         log(device, "Username atau Password belum diatur. Dilewati.", level="WARN")
         return
+        
     with DEVICE_DATA_LOCK:
         if ip in SUSPEND_UNTIL and time.time() < SUSPEND_UNTIL[ip]: return
+        
     if not ping_device_os(ip):
         with DEVICE_DATA_LOCK:
             fail_count = FAIL_COUNT.get(ip, 0) + 1
@@ -437,18 +513,67 @@ def process_device(device):
                     log(device, f"Koneksi terputus. Disuspend selama {SUSPEND_SECONDS // 60} menit.", level="WARN")
                     set_device_status(ip, "offline")
                     LAST_KNOWN_STATUS[ip] = 'offline'
+                    
+                    # --- KIRIM NOTIFIKASI OFFLINE (FORMAT FINAL) ---
+                    now = datetime.datetime.now()
+                    month_name = get_indonesian_month_name(now)
+                    location = device.get('location') or '-' # Ambil lokasi
+                    
+                    # Format tanggal (baris 1)
+                    date_line = f"{now.day} {month_name} {now.year}"
+                    # Format waktu (baris 2)
+                    time_line = now.strftime("%H:%M:%S WIB")
+                    
+                    message = (
+                        f"🚨 PERINGATAN OFFLINE 🚨\n\n"
+                        f"Perangkat:\n*{device_label(device)}* - *{location}*\n"
+                        f"(IP: {ip})\n\n"
+                        f"Telah OFFLINE pada:\n"
+                        f"{date_line}\n{time_line}\n\n"
+                        f"Layanan sinkronisasi ditangguhkan." # <-- DIPERSINGKAT
+                    )
+                    send_whatsapp_notification(message)
+                    # ----------------------------------
+                    
                 SUSPEND_UNTIL[ip] = time.time() + SUSPEND_SECONDS
             else:
                 log(device, f"Ping gagal, percobaan ke-{fail_count} dari {PING_MAX_FAIL}.", level="WARN")
         return
+        
     with DEVICE_DATA_LOCK:
         if LAST_KNOWN_STATUS.get(ip) != 'online':
+            
+            # --- KIRIM NOTIFIKASI ONLINE (PEMULIHAN) (FORMAT FINAL) ---
+            # Hanya kirim jika status sebelumnya 'offline' atau 'error'
+            if LAST_KNOWN_STATUS.get(ip) in ['offline', 'error']:
+                now = datetime.datetime.now()
+                month_name = get_indonesian_month_name(now)
+                location = device.get('location') or '-' # Ambil lokasi
+
+                # Format tanggal (baris 1)
+                date_line = f"{now.day} {month_name} {now.year}"
+                # Format waktu (baris 2)
+                time_line = now.strftime("%H:%M:%S WIB")
+                
+                message = (
+                    f"✅ PEMULIHAN KONEKSI ✅\n\n"
+                    f"Perangkat:\n*{device_label(device)}* - *{location}*\n"
+                    f"(IP: {ip})\n\n"
+                    f"Telah ONLINE kembali pada:\n"
+                    f"{date_line}\n{time_line}\n\n"
+                    f"Layanan sinkronisasi dilanjutkan." # <-- DIPERSINGKAT
+                )
+                send_whatsapp_notification(message)
+            # ------------------------------------------
+
             log_message = "Terhubung kembali." if LAST_KNOWN_STATUS.get(ip) else "Terhubung, memulai sinkronisasi event..."
             log(device, log_message, level="OK" if LAST_KNOWN_STATUS.get(ip) else "INFO")
             set_device_status(ip, "online")
             LAST_KNOWN_STATUS[ip] = 'online'
+            
         FAIL_COUNT[ip] = 0
         SUSPEND_UNTIL.pop(ip, None)
+        
     try:
         last_sync_str = get_last_sync_time(ip)
         now_time_str = iso8601_now()
@@ -481,6 +606,11 @@ def process_device(device):
         for e in new_events:
             # Langkah 1: Selalu catat SEMUA event mentah
             log_raw_event(device, e)
+            
+            # --- TAMBAHAN SLEEP 0.5 DETIK ---
+            # Memberi jeda "kesopanan" antar event untuk menghindari "burst request"
+            time.sleep(0.5)
+            # ---------------------------------
             
             event_desc = get_event_desc(e)
             
@@ -530,14 +660,24 @@ def main_sync():
             # --- Bagian Baru: Jalankan Cleanup Harian ---
             # Cek apakah sudah 24 jam (3600 * 24 = 86400 detik)
             if (datetime.datetime.now() - last_cleanup_time).total_seconds() > 86400:
-                log_system("Menjalankan tugas cleanup harian (data > 60 hari)...")
+                
+                # AMBIL PENGATURAN DARI DATABASE
+                days_to_keep = 60 # Default
+                try:
+                    # Ambil nilai dari DB, jika tidak ada, gunakan default 60
+                    days_str = db.get_setting('cleanup_days', default='60')
+                    days_to_keep = int(days_str)
+                except Exception as e:
+                    log_system(f"Gagal mengambil pengaturan cleanup, menggunakan default (60 hari). Error: {e}", level="WARN")
+
+                log_system(f"Menjalankan tugas cleanup harian (data > {days_to_keep} hari)...")
                 try:
                     # 1. Panggil fungsi cleanup log
-                    deleted_log_folders = cleanup_old_logs(60)
+                    deleted_log_folders = cleanup_old_logs(days_to_keep)
                     log_system(f"Cleanup log selesai. {deleted_log_folders} folder log lama dihapus.")
                     
                     # 2. Panggil fungsi cleanup database & gambar
-                    deleted_rows, deleted_files = db.cleanup_old_events_and_images(60)
+                    deleted_rows, deleted_files = db.cleanup_old_events_and_images(days_to_keep)
                     log_system(f"Cleanup DB & gambar selesai. {deleted_rows} baris event dan {deleted_files} file gambar dihapus.")
                     
                     log_system("Tugas cleanup harian selesai.")

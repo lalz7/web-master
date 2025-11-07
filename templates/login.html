@@ -4,10 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Masuk - Face Recognition Terminal</title>
-    <!-- CSS dari CDN -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <!-- Kustomisasi Tampilan untuk Halaman Login -->
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap');
 
@@ -65,27 +63,51 @@
             font-size: 0.95rem;
         }
 
-        /* Styling untuk input field dengan ikon */
+        /* --- PERBAIKAN STYLING INPUT --- */
+
+        /* 1. Styling untuk <div> induk */
         .input-group {
             position: relative;
-        }
-        .form-control {
-            padding: 0.9rem 1rem 0.9rem 2.75rem;
-            border: 1px solid var(--border-color);
-            border-radius: 0.5rem;
+            background-color: var(--card-bg-color); /* Pindahkan background ke sini */
+            border: 1px solid var(--border-color);   /* Pindahkan border ke sini */
+            border-radius: 0.5rem;                 /* Pindahkan radius ke sini */
             transition: border-color 0.2s, box-shadow 0.2s;
         }
-        .form-control:focus {
+        
+        /* 2. Style <div> induk saat input di dalamnya fokus */
+        .input-group:focus-within {
             border-color: var(--primary-color);
             box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
         }
+
+        /* 3. Buat input transparan dan singkirkan bordernya */
+        .form-control {
+            padding: 0.9rem 1rem 0.9rem 2.75rem;
+            background-color: transparent; /* Buat input transparan */
+            border: none;                  /* Hapus border input */
+            box-shadow: none;              /* Hapus box-shadow input */
+            position: relative;
+            z-index: 1;                    /* Taruh input di lapisan 1 */
+        }
+        
+        /* 4. Hapus style :focus dari input (sudah dihandle .input-group:focus-within) */
+        .form-control:focus {
+            border-color: transparent;
+            box-shadow: none;
+            background-color: transparent;
+        }
+        
+        /* 5. Taruh ikon di lapisan 2 (di atas input transparan) */
         .input-group .icon {
             position: absolute;
             left: 1rem;
             top: 50%;
             transform: translateY(-50%);
             color: var(--text-muted-color);
+            z-index: 2; /* Ikon ada di atas input */
         }
+        /* --- AKHIR PERBAIKAN STYLING --- */
+
 
         .btn-primary {
             padding: 0.9rem 1rem;
@@ -123,7 +145,6 @@
     </style>
 </head>
 <body>
-    <!-- Menambahkan class 'shake' jika ada pesan error dari Flask -->
     <div class="login-card {% if get_flashed_messages() %}shake{% endif %}">
         <div class="login-header">
             <div class="icon">
@@ -134,7 +155,6 @@
         </div>
         
         <form method="POST">
-            <!-- Menampilkan pesan error (flash message) -->
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% if messages %}
                     {% for category, message in messages %}
@@ -171,4 +191,3 @@
     </div>
 </body>
 </html>
-
