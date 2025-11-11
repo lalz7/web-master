@@ -21,10 +21,17 @@ def init_db():
             eventId BIGINT, employeeId INT NULL, name VARCHAR(255), date VARCHAR(10),
             time VARCHAR(8), eventDesc VARCHAR(255), pictureURL VARCHAR(255),
             localImagePath VARCHAR(255) NULL, syncType VARCHAR(20) DEFAULT 'realtime',
-            apiStatus VARCHAR(20) DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            apiStatus VARCHAR(20) DEFAULT 'pending', 
+            apiRetryCount INT DEFAULT 0, -- <-- KOLOM BARU DITAMBAHKAN
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(eventId, deviceName)
         )
     """)
+    # Coba tambahkan kolom jika tabel sudah ada (migrasi)
+    try:
+        c.execute("ALTER TABLE events ADD COLUMN apiRetryCount INT DEFAULT 0")
+    except mysql.connector.Error: pass # Abaikan jika kolom sudah ada
+
     # Tabel Devices
     c.execute("""
         CREATE TABLE IF NOT EXISTS devices (
@@ -70,12 +77,20 @@ def init_db():
     if c.fetchone()[0] == 0:
         c.execute("INSERT INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('cleanup_days', '60'))
         
-        # --- TAMBAHAN PENGATURAN WA ---
-        # (Akan diabaikan jika 'cleanup_days' sudah ada)
-        c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_enabled', 'false'))
-        c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_target_number', ''))
-        c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_api_url', 'http://10.1.105.164:60001'))
-        # -------------------------------
+    # Migrasi: Tambahkan semua pengaturan (menggunakan INSERT IGNORE)
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('cleanup_days', '60'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_enabled', 'false'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_target_number', ''))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_api_url', 'http://10.1.105.164:60001'))
+    # --- PENGATURAN BARU UNTUK WORKER ---
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('api_fail_enabled', 'false'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('api_fail_max_retry', '5'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('ping_max_fail', '5'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('suspend_seconds', '300'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('worker_ping_interval', '10'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('worker_api_interval', '15'))
+    # -----------------------------------
+
 
     # Migrasi (tetap ada untuk instalasi lama)
     try:
@@ -86,12 +101,6 @@ def init_db():
         c.execute("ALTER TABLE devices ADD COLUMN is_active BOOLEAN DEFAULT TRUE")
     except mysql.connector.Error: pass
     
-    # Migrasi: Tambahkan pengaturan WA jika tabel settings sudah ada tapi pengaturan WA belum
-    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_enabled', 'false'))
-    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_target_number', ''))
-    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('whatsapp_api_url', 'http://10.1.105.164:60001'))
-
-
     c.close()
     conn.close()
 
@@ -268,6 +277,42 @@ def get_devices_status():
         row['lastSync'] = last_sync.strftime('%d-%m-%Y %H:%M:%S') if last_sync else 'Belum pernah'
         result.append(row)
     return result
+
+# --- FUNGSI BARU UNTUK WORKER ---
+
+def get_pending_api_events(limit, max_retries):
+    """Mengambil event yang 'pending' atau 'failed' & belum mencapai max_retries."""
+    conn = get_db()
+    c = conn.cursor(dictionary=True)
+    query = """
+        SELECT e.*, d.targetApi, d.username as deviceUsername, d.password as devicePassword 
+        FROM events e
+        JOIN devices d ON e.deviceName = d.name
+        WHERE (e.apiStatus = 'pending' OR e.apiStatus = 'failed')
+          AND e.apiRetryCount < %s
+          AND d.targetApi IS NOT NULL 
+          AND d.targetApi != ''
+        ORDER BY e.id ASC 
+        LIMIT %s
+    """
+    c.execute(query, (max_retries, limit))
+    events = c.fetchall()
+    c.close()
+    conn.close()
+    return events
+
+def update_event_api_status(event_id, status, retry_count):
+    """Memperbarui status API dan jumlah retry sebuah event."""
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("UPDATE events SET apiStatus=%s, apiRetryCount=%s WHERE id=%s", 
+                  (status, retry_count, event_id))
+    except Exception as e:
+        print(f"Error updating event API status: {e}")
+    finally:
+        c.close()
+        conn.close()
 
 # --- FUNGSI EVENT & STATISTIK ---
 

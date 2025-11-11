@@ -4,6 +4,7 @@ import datetime
 import json
 import requests
 import base64
+import time # <-- Diperlukan untuk jeda
 from requests.auth import HTTPDigestAuth
 from flask import (Flask, render_template, request, redirect, url_for, 
                    flash, jsonify, Response, g)
@@ -81,7 +82,17 @@ def settings():
         'cleanup_days': db.get_setting('cleanup_days', default='60'),
         'whatsapp_enabled': db.get_setting('whatsapp_enabled', default='false'),
         'whatsapp_target_number': db.get_setting('whatsapp_target_number', default=''),
-        'whatsapp_api_url': db.get_setting('whatsapp_api_url', default='http://10.1.105.164:60001')
+        'whatsapp_api_url': db.get_setting('whatsapp_api_url', default='http://10.1.105.164:60001'),
+        
+        # Pengaturan Notifikasi API Gagal
+        'api_fail_enabled': db.get_setting('api_fail_enabled', default='false'),
+        'api_fail_max_retry': db.get_setting('api_fail_max_retry', default='5'),
+        
+        # Pengaturan Worker Baru
+        'ping_max_fail': db.get_setting('ping_max_fail', default='5'),
+        'suspend_seconds': db.get_setting('suspend_seconds', default='300'),
+        'worker_ping_interval': db.get_setting('worker_ping_interval', default='10'),
+        'worker_api_interval': db.get_setting('worker_api_interval', default='15'),
     }
     # Kirim SEMUA pengaturan sebagai satu variabel 'settings'
     return render_template('settings.html', settings=settings_data)
@@ -138,6 +149,10 @@ def save_notification_settings():
     number_string = request.form.get('whatsapp_target_number', '').strip()
     api_url = request.form.get('whatsapp_api_url', '').strip()
     
+    # Ambil data baru
+    api_fail_enabled = 'true' if request.form.get('api_fail_enabled') else 'false'
+    api_fail_max_retry = request.form.get('api_fail_max_retry', '5')
+
     all_valid = True
     
     if enabled == 'true':
@@ -161,10 +176,33 @@ def save_notification_settings():
         db.update_setting('whatsapp_enabled', enabled)
         db.update_setting('whatsapp_target_number', number_string)
         db.update_setting('whatsapp_api_url', api_url)
+        
+        # Simpan data baru
+        db.update_setting('api_fail_enabled', api_fail_enabled)
+        db.update_setting('api_fail_max_retry', api_fail_max_retry)
+
         flash('Pengaturan notifikasi berhasil disimpan.', 'success')
     
     return redirect(url_for('settings'))
 # ---------------------------------------------
+
+# --- RUTE BARU UNTUK SIMPAN SINKRONISASI ---
+@app.route('/settings/sync', methods=['POST'])
+@login_required
+def save_sync_settings():
+    try:
+        db.update_setting('ping_max_fail', str(int(request.form.get('ping_max_fail', 5))))
+        db.update_setting('suspend_seconds', str(int(request.form.get('suspend_seconds', 300))))
+        db.update_setting('worker_ping_interval', str(int(request.form.get('worker_ping_interval', 10))))
+        db.update_setting('worker_api_interval', str(int(request.form.get('worker_api_interval', 15))))
+        flash('Pengaturan sinkronisasi berhasil disimpan.', 'success')
+    except ValueError:
+        flash('Semua nilai sinkronisasi harus berupa angka yang valid.', 'danger')
+    except Exception as e:
+        flash(f'Gagal menyimpan pengaturan: {e}', 'danger')
+        
+    return redirect(url_for('settings'))
+# -------------------------------------------
 
 # --- ROUTE UTAMA APLIKASI (TETAP SAMA) ---
 @app.route('/')
@@ -290,7 +328,7 @@ def api_devices_status():
     devices_status = db.get_devices_status()
     return jsonify(devices_status)
 
-# --- API MANAJEMEN PENGGUNA (TETAP SAMA) ---
+# --- API MANAJEMEN PENGGUNA (api_update_user_info DIROMBAK) ---
 @app.route('/api/devices/<string:ip>/users')
 @login_required
 def api_get_device_users(ip):
@@ -330,50 +368,146 @@ def api_get_device_users(ip):
     except Exception as e:
         return jsonify({'error': f"Gagal terhubung atau memproses: {e}"}), 500
 
-@app.route('/api/devices/<string:ip>/users/<string:employee_no>/update', methods=['PUT'])
+# --- FUNGSI UPDATE USER (LOGIKA KONDISIONAL BARU) ---
+@app.route('/api/devices/<string:ip>/users/<string:employee_no>/update', methods=['POST'])
 @login_required
 def api_update_user_info(ip, employee_no):
     device = db.get_device_by_ip(ip)
     if not device: return jsonify({'error': 'Perangkat tidak ditemukan'}), 404
-    data = request.json
-    new_name = data.get('name')
-    new_gender = data.get('gender')
-    if not new_name: return jsonify({'error': 'Nama tidak boleh kosong'}), 400
-    url = f"http://{device['ip']}/ISAPI/AccessControl/UserInfo/Modify?format=json"
+    
     auth = HTTPDigestAuth(device['username'], device['password'])
-    payload = {"UserInfo": {"employeeNo": employee_no, "name": new_name}}
-    if new_gender in ['male', 'female', 'unknown']:
-        payload["UserInfo"]["gender"] = new_gender
+    data = request.form
+    name = data.get('name')
+    gender = data.get('gender')
+    start_time_str = data.get('startTime')
+    end_time_str = data.get('endTime')
+    
+    if not all([name, start_time_str, end_time_str]):
+        return jsonify({'error': 'Nama dan Waktu Mulai/Akhir wajib diisi.'}), 400
+
     try:
-        response = requests.put(url, json=payload, auth=auth, timeout=10)
-        if response.status_code in [200, 204]:
-            return jsonify({'success': True})
-        response_data = response.json() if response.content else {'errorMsg': response.text}
-        return jsonify({'error': f"Gagal update data: {response_data.get('errorMsg') or 'Respons tidak terduga.'}"}), 502
-    except Exception as e:
-        return jsonify({'error': f"Error koneksi: {e}"}), 500
+        formatted_start_time = start_time_str + ":00"
+        formatted_end_time = end_time_str + ":00"
+    except Exception:
+        return jsonify({'error': 'Format waktu tidak valid.'}), 400
+
+    # Cek apakah ada file foto baru di request
+    photo_is_present = 'photo' in request.files and request.files['photo'].filename != ''
+
+    # --- LOGIKA KONDISIONAL ---
+    if photo_is_present:
+        
+        # --- ALUR A: HAPUS TOTAL DAN BUAT ULANG (karena ada foto baru) ---
+        
+        # 1. HAPUS PENGGUNA (UserInfo/Delete)
+        delete_user_url = f"http://{device['ip']}/ISAPI/AccessControl/UserInfo/Delete?format=json"
+        delete_user_payload = {"UserInfoDelCond": {"employeeNoList": [{"employeeNo": employee_no}]}}
+        try:
+            delete_res = requests.put(delete_user_url, json=delete_user_payload, auth=auth, timeout=10)
+            if delete_res.status_code not in [200, 204]:
+                delete_res_data = delete_res.json() if delete_res.content else {'statusString': delete_res.text}
+                return jsonify({'error': f"Gagal menghapus pengguna lama (sebelum upload baru): {delete_res_data.get('statusString') or 'Error tidak diketahui'}"}), 502
+        except Exception as e:
+            return jsonify({'error': f"Error koneksi saat menghapus pengguna lama: {e}"}), 500
+
+        # Beri jeda 1 detik agar perangkat bisa memproses penghapusan
+        time.sleep(1)
+
+        # 2. BUAT ULANG PENGGUNA (UserInfo/Record)
+        user_payload = {
+            "UserInfo": {
+                "employeeNo": employee_no, "name": name, "userType": "normal",
+                "gender": gender if gender in ['male', 'female'] else 'unknown',
+                "Valid": {"enable": True, "beginTime": formatted_start_time, "endTime": formatted_end_time},
+                "doorRight": "1", "RightPlan": [{"doorNo": 1, "planTemplateNo": "1"}]
+            }
+        }
+        user_url = f"http://{device['ip']}/ISAPI/AccessControl/UserInfo/Record?format=json"
+        try:
+            user_res = requests.post(user_url, json=user_payload, auth=auth, timeout=10)
+            if user_res.status_code not in [200, 204]:
+                user_res_data = user_res.json() if user_res.content else {'statusString': user_res.text}
+                return jsonify({'error': f"Gagal membuat ulang data pengguna: {user_res_data.get('statusString') or 'Error tidak diketahui'}"}), 502
+        except Exception as e:
+            return jsonify({'error': f"Error koneksi saat membuat ulang pengguna: {e}"}), 500
+
+        # 3. UPLOAD FOTO BARU (FDLib/FaceDataRecord)
+        photo_file = request.files['photo']
+        photo_data = photo_file.read()
+        photo_url = f"http://{device['ip']}/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json"
+        json_payload = {"faceLibType": "blackFD", "FDID": "1", "employeeNo": employee_no, "FPID": employee_no}
+        files = {
+            'FaceDataRecord': (None, json.dumps(json_payload), 'application/json'), 
+            'FaceImage': (photo_file.filename, photo_data, photo_file.mimetype)
+        }
+        try:
+            photo_res = requests.post(photo_url, files=files, auth=auth, timeout=20)
+            if photo_res.status_code not in [200, 204]:
+                return jsonify({'success': True, 'warning': 'Pengguna diperbarui, tapi unggah foto baru gagal.'})
+        except Exception as e:
+            return jsonify({'success': True, 'warning': f'Pengguna diperbarui, tapi koneksi unggah foto gagal: {e}'})
+
+        return jsonify({'success': True, 'message': 'Pengguna dan foto berhasil diperbarui.'})
+
+    else:
+        
+        # --- ALUR B: HANYA UPDATE INFO (karena tidak ada foto baru) ---
+        user_payload = {
+            "UserInfo": {
+                "employeeNo": employee_no, 
+                "name": name,
+                "gender": gender if gender in ['male', 'female'] else 'unknown',
+                "Valid": {"enable": True, "beginTime": formatted_start_time, "endTime": formatted_end_time}
+            }
+        }
+        user_url = f"http://{device['ip']}/ISAPI/AccessControl/UserInfo/Modify?format=json"
+        
+        try:
+            user_res = requests.put(user_url, json=user_payload, auth=auth, timeout=10) 
+            if user_res.status_code not in [200, 204]:
+                user_res_data = user_res.json() if user_res.content else {'statusString': user_res.text}
+                return jsonify({'error': f"Gagal update data pengguna: {user_res_data.get('statusString') or 'Error tidak diketahui'}"}), 502
+        except Exception as e:
+            return jsonify({'error': f"Error koneksi saat update pengguna: {e}"}), 500
+        
+        return jsonify({'success': True, 'message': 'Data pengguna berhasil diperbarui (foto tidak diubah).'})
+# --- AKHIR FUNGSI UPDATE USER ---
+
 
 @app.route('/api/devices/<string:ip>/users/add', methods=['POST'])
 @login_required
 def api_add_user(ip):
     device = db.get_device_by_ip(ip)
     if not device: return jsonify({'error': 'Perangkat tidak ditemukan'}), 404
+    
     data = request.form
     employee_no = data.get('employeeNo')
     name = data.get('name')
     gender = data.get('gender')
     start_time_str = data.get('startTime')
     end_time_str = data.get('endTime')
+    
     if not all([employee_no, name, start_time_str, end_time_str]):
         return jsonify({'error': 'Semua field teks wajib diisi.'}), 400
+
     auth = HTTPDigestAuth(device['username'], device['password'])
+    
     try:
         formatted_start_time = start_time_str + ":00"
         formatted_end_time = end_time_str + ":00"
     except Exception:
         return jsonify({'error': 'Format waktu tidak valid.'}), 400
-    user_payload = {"UserInfo": {"employeeNo": employee_no, "name": name, "userType": "normal", "gender": gender if gender in ['male', 'female'] else 'unknown', "Valid": {"enable": True, "beginTime": formatted_start_time, "endTime": formatted_end_time}, "doorRight": "1", "RightPlan": [{"doorNo": 1, "planTemplateNo": "1"}]}}
+    
+    user_payload = {
+        "UserInfo": {
+            "employeeNo": employee_no, "name": name, "userType": "normal",
+            "gender": gender if gender in ['male', 'female'] else 'unknown',
+            "Valid": {"enable": True, "beginTime": formatted_start_time, "endTime": formatted_end_time},
+            "doorRight": "1", "RightPlan": [{"doorNo": 1, "planTemplateNo": "1"}]
+        }
+    }
     user_url = f"http://{device['ip']}/ISAPI/AccessControl/UserInfo/Record?format=json"
+    
     try:
         user_res = requests.post(user_url, json=user_payload, auth=auth, timeout=10)
         if user_res.status_code not in [200, 204]:
@@ -381,18 +515,30 @@ def api_add_user(ip):
             return jsonify({'error': f"Gagal membuat pengguna: {user_res_data.get('statusString') or 'Error tidak diketahui'}"}), 502
     except Exception as e:
         return jsonify({'error': f"Error koneksi saat membuat pengguna: {e}"}), 500
+
     if 'photo' in request.files and request.files['photo'].filename != '':
         photo_file = request.files['photo']
         photo_data = photo_file.read()
+        
         photo_url = f"http://{device['ip']}/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json"
         json_payload = {"faceLibType": "blackFD", "FDID": "1", "employeeNo": employee_no, "FPID": employee_no}
-        files = {'FaceDataRecord': (None, json.dumps(json_payload), 'application/json'), 'FaceImage': (photo_file.filename, photo_data, 'image/jpeg')}
+        
+        # --- PERBAIKAN BUG MIME TYPE ---
+        # Menggunakan photo_file.mimetype dinamis, bukan 'image/jpeg'
+        files = {
+            'FaceDataRecord': (None, json.dumps(json_payload), 'application/json'), 
+            'FaceImage': (photo_file.filename, photo_data, photo_file.mimetype)
+        }
+        # --- AKHIR PERBAIKAN ---
+        
         try:
+            # Menambah user baru menggunakan POST
             photo_res = requests.post(photo_url, files=files, auth=auth, timeout=20)
             if photo_res.status_code not in [200, 204]:
                 return jsonify({'success': True, 'warning': 'Pengguna dibuat, tapi unggah foto gagal.'})
         except Exception:
             return jsonify({'success': True, 'warning': 'Pengguna dibuat, tapi koneksi unggah foto gagal.'})
+
     return jsonify({'success': True, 'message': 'Pengguna berhasil ditambahkan.'})
 
 @app.route('/api/devices/<string:ip>/users/<string:employee_no>/delete', methods=['DELETE'])

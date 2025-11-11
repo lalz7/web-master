@@ -33,6 +33,11 @@
                     <i class="fab fa-whatsapp me-2"></i>Notifikasi
                 </button>
             </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="sync-tab" data-bs-toggle="tab" data-bs-target="#sync-pane" type="button" role="tab" aria-controls="sync-pane" aria-selected="false">
+                    <i class="fas fa-sync-alt me-2"></i>Sinkronisasi
+                </button>
+            </li>
         </ul>
     </div>
     <div class="card-body p-4">
@@ -79,7 +84,7 @@
             <div class="tab-pane fade" id="notif-pane" role="tabpanel" aria-labelledby="notif-tab">
                 <h5 class="mb-4">Pengaturan Notifikasi WhatsApp</h5>
                 <p class="text-muted">
-                    Server API WA lokal Anda akan digunakan untuk mengirim peringatan perangkat offline.
+                    Server API WA lokal Anda akan digunakan untuk mengirim peringatan.
                 </p>
                 <hr>
                 <form action="{{ url_for('save_notification_settings') }}" method="POST">
@@ -88,6 +93,11 @@
                         <label class="form-check-label" for="whatsapp_enabled">Aktifkan Notifikasi Peringatan Offline</label>
                     </div>
                     
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="api_fail_enabled" name="api_fail_enabled" value="true" {% if settings.api_fail_enabled == 'true' %}checked{% endif %}>
+                        <label class="form-check-label" for="api_fail_enabled">Aktifkan Notifikasi API Gagal</label>
+                    </div>
+
                     <div class="mb-3">
                         <label for="whatsapp_api_url" class="form-label">URL API WhatsApp Server</label>
                         <input type="text" class="form-control" id="whatsapp_api_url" name="whatsapp_api_url" value="{{ settings.whatsapp_api_url }}" placeholder="http://10.1.105.164:60001">
@@ -104,8 +114,52 @@
                             Contoh: <code>62812345,62856789</code>
                         </div>
                     </div>
+
+                    <div class="mb-3">
+                        <label for="api_fail_max_retry" class="form-label">Batas Retry Notifikasi API</label>
+                        <input type="number" class="form-control" id="api_fail_max_retry" name="api_fail_max_retry" min="1" value="{{ settings.api_fail_max_retry }}" required>
+                        <div class="form-text">
+                            Jumlah percobaan gagal sebelum mengirim notifikasi "API Gagal".
+                        </div>
+                    </div>
+
                     <div class="text-end mt-4">
                         <button type="submit" class="btn btn-primary">Simpan Notifikasi</button>
+                    </div>
+                </form>
+            </div>
+            
+            <div class="tab-pane fade" id="sync-pane" role="tabpanel" aria-labelledby="sync-tab">
+                <h5 class="mb-4">Pengaturan Worker & Sinkronisasi</h5>
+                <p class="text-muted">
+                    Pengaturan ini mengontrol seberapa sering layanan worker memeriksa perangkat dan mengirim data.
+                </p>
+                <hr>
+                <form action="{{ url_for('save_sync_settings') }}" method="POST">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="worker_ping_interval" class="form-label">Interval Ping Perangkat (detik)</label>
+                            <input type="number" class="form-control" id="worker_ping_interval" name="worker_ping_interval" min="5" value="{{ settings.worker_ping_interval }}" required>
+                            <div class="form-text">Jeda waktu (detik) antar siklus ping ke semua perangkat.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="worker_api_interval" class="form-label">Interval Antrean API (detik)</label>
+                            <input type="number" class="form-control" id="worker_api_interval" name="worker_api_interval" min="5" value="{{ settings.worker_api_interval }}" required>
+                            <div class="form-text">Seberapa sering worker mencoba mengirim data `pending`.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="ping_max_fail" class="form-label">Batas Gagal Ping (kali)</label>
+                            <input type="number" class="form-control" id="ping_max_fail" name="ping_max_fail" min="1" value="{{ settings.ping_max_fail }}" required>
+                            <div class="form-text">Jumlah ping gagal sebelum perangkat dianggap `offline`.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="suspend_seconds" class="form-label">Durasi Penangguhan (detik)</label>
+                            <input type="number" class="form-control" id="suspend_seconds" name="suspend_seconds" min="30" value="{{ settings.suspend_seconds }}" required>
+                            <div class="form-text">Jeda waktu (detik) sebelum perangkat offline dicek kembali.</div>
+                        </div>
+                    </div>
+                    <div class="text-end mt-4">
+                        <button type="submit" class="btn btn-primary">Simpan Sinkronisasi</button>
                     </div>
                 </form>
             </div>

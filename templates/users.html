@@ -55,27 +55,66 @@
 </div>
 
 <div class="modal fade" id="editUserModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content">
       <div class="modal-header"><h5 class="modal-title">Edit Pengguna</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
       <div class="modal-body">
         <div id="edit-notification-area"></div>
-        <form id="editUserForm" onsubmit="return false;">
+        <form id="editUserForm">
+            <input type="hidden" id="edit-employee-no-hidden">
             <div class="row">
-                <div class="col-md-6 mb-3"><label for="edit-employee-no" class="form-label">ID</label><input type="text" class="form-control" id="edit-employee-no" disabled></div>
-                <div class="col-md-6 mb-3">
-                    <label for="edit-user-gender" class="form-label">Jenis Kelamin</label>
-                    <select id="edit-user-gender" class="form-select"><option value="unknown">Tidak Diketahui</option><option value="male">Laki-laki</option><option value="female">Perempuan</option></select>
+                <div class="col-md-7">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="edit-employee-no" class="form-label">ID Karyawan</label>
+                            <input type="text" class="form-control" id="edit-employee-no" disabled>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="edit-user-gender" class="form-label">Jenis Kelamin</label>
+                            <select id="edit-user-gender" class="form-select">
+                                <option value="unknown">Tidak Diketahui</option>
+                                <option value="male">Laki-laki</option>
+                                <option value="female">Perempuan</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit-user-name" class="form-label">Nama Lengkap</label>
+                        <input type="text" class="form-control" id="edit-user-name" required>
+                    </div>
+                    
+                    <hr class="my-3">
+                    <h6 class="mb-3"><i class="fas fa-clock me-1"></i> Masa Berlaku Akses</h6>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="edit-start-time" class="form-label">Waktu Mulai</label>
+                            <input type="datetime-local" class="form-control" id="edit-start-time" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="edit-end-time" class="form-label">Waktu Akhir</label>
+                            <input type="datetime-local" class="form-control" id="edit-end-time" required>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-5">
+                    <label for="edit-photo-input" class="form-label">Ganti Foto Wajah (Opsional)</label>
+                    <div id="edit-photo-preview-container" class="text-center mb-2" style="display: none;">
+                        <img id="edit-photo-preview" src="#" alt="Preview Gambar" class="img-fluid rounded border p-1" style="max-height: 220px;">
+                    </div>
+                    <input class="form-control" type="file" id="edit-photo-input" accept="image/jpeg, image/png">
+                    <small class="form-text mt-1 d-block">Kosongkan jika tidak ingin mengganti foto.</small>
+                    <small id="edit-photo-validation-text" class="form-text mt-1 d-block"></small>
                 </div>
             </div>
-            <div class="mb-3"><label for="edit-user-name" class="form-label">Nama Lengkap</label><input type="text" class="form-control" id="edit-user-name" required></div>
         </form>
       </div>
-      <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button><button type="button" class="btn btn-primary" id="saveUserChangesBtn">Simpan</button></div>
+      <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+          <button type="button" class="btn btn-primary" id="saveUserChangesBtn">Simpan Perubahan</button>
+        </div>
     </div>
   </div>
 </div>
-
 <div class="modal fade" id="addUserModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content">
@@ -137,6 +176,13 @@ $(document).ready(function() {
     const getFutureDateTime = (years) => { const d = new Date(); d.setFullYear(d.getFullYear() + years); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
     const getGenderDisplay = gender => (gender === 'male' ? 'Laki-laki' : (gender === 'female' ? 'Perempuan' : '-'));
     const showNotification = (message, type = 'success', area = $('#notification-area')) => area.html(`<div class="alert alert-${type} alert-dismissible fade show" role="alert">${message}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`).fadeIn().delay(5000).fadeOut();
+    
+    // Fungsi baru untuk memformat tanggal ISO dari Hikvision ke input datetime-local
+    const formatISODateForInput = (isoString) => {
+        if (!isoString) return getNowDateTime(); // Default jika tidak ada
+        // Hapus timezone ('+07:00') dan detik jika ada, lalu ambil 16 karakter (YYYY-MM-DDTHH:MM)
+        return isoString.split('+')[0].slice(0, 16);
+    };
 
     // --- DATA LOADING ---
     function loadUsers() {
@@ -146,7 +192,7 @@ $(document).ready(function() {
         fetch(`/api/devices/${deviceIp}/users`)
             .then(res => res.ok ? res.json() : res.json().then(err => { throw new Error(err.error); }))
             .then(users => {
-                usersDataCache = users;
+                usersDataCache = users; // Simpan data mentah
                 const tableBody = tableElement.find('tbody');
                 if (users.length === 0) {
                     tableBody.html('<tr><td colspan="5" class="text-center text-muted py-5">Tidak ada pengguna.</td></tr>');
@@ -155,10 +201,8 @@ $(document).ready(function() {
                         const gender = getGenderDisplay(user.gender);
                         const attendanceTime = user.attendance_time;
                         const attendanceSortKey = attendanceTime || 'zzz';
-                        // REVISI: "Belum Hadir" ganti jadi "absent"
                         const attendanceHtml = attendanceTime ? `<span class="badge bg-success rounded-pill">${attendanceTime}</span>` : `<span class="badge bg-secondary rounded-pill">absent</span>`;
                         
-                        // REVISI: Semua kelas perataan (text-right, text-center) dihapus. Diatur oleh DataTables.
                         tableBody.append(`<tr>
                             <td><strong>${user.employeeNo}</strong></td>
                             <td>${user.name}</td>
@@ -172,7 +216,6 @@ $(document).ready(function() {
                     });
                 }
                 
-                // REVISI: Inisialisasi DataTables diubah untuk mengatur perataan
                 dataTable = tableElement.DataTable({
                     "order": [[3, "asc"]], // Urutkan berdasarkan kehadiran
                     "language": {
@@ -182,15 +225,10 @@ $(document).ready(function() {
                         "paginate": { "next": "Berikutnya", "previous": "Sebelumnya" }
                     },
                     "columnDefs": [
-                        // [Kolom 0] Id: rata kanan
                         { "className": "text-right", "targets": 0 },
-                        // [Kolom 1] Nama: rata kiri (default, tapi kita tegaskan)
                         { "className": "text-left", "targets": 1 },
-                        // [Kolom 2] Jenis Kelamin: rata kiri
                         { "className": "text-left", "targets": 2 },
-                        // [Kolom 3] Kehadiran: rata tengah
                         { "className": "text-center", "targets": 3 },
-                        // [Kolom 4] Aksi: rata tengah
                         { "className": "text-center", "targets": 4 }
                     ]
                 });
@@ -200,33 +238,107 @@ $(document).ready(function() {
             .finally(() => $('#loading-spinner').hide());
     }
 
-    // --- CRUD PENGGUNA (EDIT & DELETE) ---
+    // --- CRUD PENGGUNA (EDIT) ---
     const editModal = new bootstrap.Modal($('#editUserModal')[0]);
     
     tableElement.on('click', '.edit-btn', function() {
+        // Ambil data user lengkap dari cache
         const user = usersDataCache.find(u => u.employeeNo == $(this).data('id'));
         if (!user) return;
-        $('#edit-employee-no').val(user.employeeNo);
-        $('#edit-user-name').val(user.name).data('original', user.name);
-        $('#edit-user-gender').val(user.gender || 'unknown').data('original', user.gender || 'unknown');
+        
+        // Reset form
+        $('#editUserForm')[0].reset();
         $('#edit-notification-area').empty();
+        $('#edit-photo-preview-container').hide();
+        $('#edit-photo-validation-text').text('');
+        $('#addNewUserBtn').prop('disabled', false); // Pastikan tombol simpan aktif
+
+        // Isi data umum
+        $('#edit-employee-no').val(user.employeeNo);
+        $('#edit-employee-no-hidden').val(user.employeeNo); // Input hidden untuk form
+        $('#edit-user-name').val(user.name);
+        $('#edit-user-gender').val(user.gender || 'unknown');
+        
+        // Isi data masa berlaku (Valid)
+        let beginTime = getNowDateTime();
+        let endTime = getFutureDateTime(10);
+        if (user.Valid) {
+            beginTime = formatISODateForInput(user.Valid.beginTime);
+            endTime = formatISODateForInput(user.Valid.endTime);
+        }
+        $('#edit-start-time').val(beginTime);
+        $('#edit-end-time').val(endTime);
+
         editModal.show();
     });
 
+    // Validasi Foto untuk Modal Edit
+    $('#edit-photo-input').on('change', function() {
+        const file = this.files[0];
+        const validationText = $('#edit-photo-validation-text');
+        const previewContainer = $('#edit-photo-preview-container');
+        const previewImage = $('#edit-photo-preview');
+        const saveBtn = $('#saveUserChangesBtn');
+        saveBtn.prop('disabled', false);
+
+        if (!file) {
+            previewContainer.hide();
+            validationText.text('');
+            return;
+        }
+        if (!['image/jpeg', 'image/png'].includes(file.type)) {
+            validationText.text('Format file harus JPG atau PNG.').removeClass('text-success').addClass('text-danger');
+            previewContainer.hide(); $(this).val('');
+            saveBtn.prop('disabled', true);
+            return;
+        }
+        if (file.size > 200 * 1024) {
+            validationText.text(`Ukuran file terlalu besar (${(file.size / 1024).toFixed(0)} KB). Maksimal 200 KB.`).removeClass('text-success').addClass('text-danger');
+            previewContainer.hide(); $(this).val('');
+            saveBtn.prop('disabled', true);
+            return;
+        }
+
+        validationText.text(`Ukuran file: ${(file.size / 1024).toFixed(0)} KB (OK)`).removeClass('text-danger').addClass('text-success');
+        const reader = new FileReader();
+        reader.onload = e => { previewImage.attr('src', e.target.result); previewContainer.show(); };
+        reader.readAsDataURL(file);
+    });
+
+    // Simpan Perubahan (Edit)
     $('#saveUserChangesBtn').on('click', async function() {
+        if (!document.getElementById('editUserForm').checkValidity()) { 
+            document.getElementById('editUserForm').reportValidity(); 
+            return; 
+        }
         const btn = $(this).prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Menyimpan...');
-        const empNo = $('#edit-employee-no').val();
-        const data = { name: $('#edit-user-name').val(), gender: $('#edit-user-gender').val() };
+        
+        const formData = new FormData();
+        const empNo = $('#edit-employee-no-hidden').val();
+        formData.append('employeeNo', empNo);
+        formData.append('name', $('#edit-user-name').val());
+        formData.append('gender', $('#edit-user-gender').val());
+        formData.append('startTime', $('#edit-start-time').val());
+        formData.append('endTime', $('#edit-end-time').val());
+        
+        const photoFile = $('#edit-photo-input')[0].files[0];
+        if (photoFile) {
+            formData.append('photo', photoFile);
+        }
+
         try {
-            if (data.name !== $('#edit-user-name').data('original') || data.gender !== $('#edit-user-gender').data('original')) {
-                const res = await fetch(`/api/devices/${deviceIp}/users/${empNo}/update`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
-                if (!res.ok) { const resData = await res.json(); throw new Error(resData.error); }
-                showNotification('Perubahan berhasil disimpan!', 'success');
-            } else {
-                showNotification('Tidak ada perubahan terdeteksi.', 'info');
-            }
+            // Kita ubah ke method POST agar konsisten dengan FormData
+            // Endpoint di app.py akan diubah namanya menjadi /update
+            const res = await fetch(`/api/devices/${deviceIp}/users/${empNo}/update`, { 
+                method: 'POST', // Gunakan POST untuk FormData
+                body: formData 
+            });
+            const resData = await res.json();
+            if (!res.ok) throw new Error(resData.error || resData.warning);
+            
+            showNotification(resData.message || resData.warning || 'Perubahan berhasil disimpan!', resData.warning ? 'warning' : 'success');
             editModal.hide(); 
-            setTimeout(loadUsers, 1500); // Beri jeda sebelum memuat ulang
+            setTimeout(loadUsers, 2000); // Beri jeda 2 detik
         } catch (error) {
             showNotification(error.message, 'danger', $('#edit-notification-area'));
         } finally {
@@ -234,6 +346,7 @@ $(document).ready(function() {
         }
     });
 
+    // --- CRUD PENGGUNA (DELETE) ---
     tableElement.on('click', '.delete-btn', function() {
         const empNo = $(this).data('id');
         const userName = $(this).data('name');
@@ -247,7 +360,7 @@ $(document).ready(function() {
                     const res = await fetch(`/api/devices/${deviceIp}/users/${empNo}/delete`, { method: 'DELETE' });
                     if (!res.ok) { const resData = await res.json(); throw new Error(resData.error); }
                     Swal.fire('Berhasil!', 'Pengguna berhasil dihapus.', 'success');
-                    setTimeout(loadUsers, 1500); // Beri jeda sebelum memuat ulang
+                    setTimeout(loadUsers, 1500); // Beri jeda
                 } catch (error) {
                     Swal.fire('Gagal!', error.message, 'error');
                 }
@@ -263,6 +376,7 @@ $(document).ready(function() {
         $('#add-notification-area').empty();
         $('#add-photo-preview-container').hide();
         $('#add-photo-validation-text').text('');
+        $('#addNewUserBtn').prop('disabled', false); // Pastikan tombol add aktif
         $('#add-start-time').val(getNowDateTime());
         $('#add-end-time').val(getFutureDateTime(10));
         addModal.show();
@@ -323,7 +437,7 @@ $(document).ready(function() {
             if (!res.ok) throw new Error(resData.error || resData.warning);
             showNotification(resData.message || resData.warning || 'Pengguna berhasil ditambahkan!', resData.warning ? 'warning' : 'success');
             addModal.hide(); 
-            setTimeout(loadUsers, 2000); // Beri jeda 2 detik sebelum memuat ulang
+            setTimeout(loadUsers, 2000); // Beri jeda 2 detik
         } catch (error) {
             showNotification(error.message, 'danger', $('#add-notification-area'));
         } finally {
