@@ -22,7 +22,7 @@ def init_db():
             time VARCHAR(8), eventDesc VARCHAR(255), pictureURL VARCHAR(255),
             localImagePath VARCHAR(255) NULL, syncType VARCHAR(20) DEFAULT 'realtime',
             apiStatus VARCHAR(20) DEFAULT 'pending', 
-            apiRetryCount INT DEFAULT 0, -- <-- KOLOM BARU DITAMBAHKAN
+            apiRetryCount INT DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(eventId, deviceName)
         )
@@ -89,7 +89,17 @@ def init_db():
     c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('suspend_seconds', '300'))
     c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('worker_ping_interval', '10'))
     c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('worker_api_interval', '15'))
-    # -----------------------------------
+    
+    # --- 8 PENGATURAN BARU DITAMBAHKAN DI SINI ---
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('poll_interval', '2'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('event_sleep_delay', '1'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('realtime_tolerance', '120'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('request_timeout', '30'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('api_queue_limit', '5'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('event_batch_max', '100'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('sync_download_retries', '5'))
+    c.execute("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (%s, %s)", ('worker_download_retries', '2'))
+    # ---------------------------------------------
 
 
     # Migrasi (tetap ada untuk instalasi lama)
@@ -183,6 +193,7 @@ def get_device_by_ip(ip):
     return device
 
 def get_all_devices():
+    """Mengambil SEMUA PERANGKAT AKTIF untuk layanan sinkronisasi."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
     c.execute("SELECT * FROM devices WHERE is_active = TRUE ORDER BY name")
@@ -192,6 +203,7 @@ def get_all_devices():
     return rows
 
 def get_all_devices_for_ui():
+    """Mengambil SEMUA perangkat (aktif dan nonaktif) untuk ditampilkan di UI."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
     c.execute("SELECT * FROM devices ORDER BY is_active DESC, ip ASC")
@@ -201,6 +213,7 @@ def get_all_devices_for_ui():
     return rows
 
 def toggle_device_active_state(ip):
+    """Mengubah status aktif/nonaktif sebuah perangkat."""
     conn = get_db()
     c = conn.cursor()
     try:
@@ -211,6 +224,7 @@ def toggle_device_active_state(ip):
         conn.close()
 
 def get_all_unique_locations():
+    """Mengambil semua lokasi unik dari tabel devices untuk filter dropdown."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
     c.execute("SELECT DISTINCT location FROM devices WHERE location IS NOT NULL AND location != '' AND is_active = TRUE ORDER BY location")
@@ -220,6 +234,7 @@ def get_all_unique_locations():
     return locations
 
 def add_device(ip, name, location, target_api, username, password):
+    """Menambahkan perangkat baru ke database."""
     conn = get_db()
     c = conn.cursor()
     try:
@@ -233,14 +248,17 @@ def add_device(ip, name, location, target_api, username, password):
         conn.close()
 
 def update_device(original_ip, name, location, target_api, username, password):
+    """Memperbarui data perangkat di database."""
     conn = get_db()
     c = conn.cursor()
+    # Hanya update password jika diisi, jika tidak, pertahankan yang lama
     if password:
         query = "UPDATE devices SET name=%s, location=%s, targetApi=%s, username=%s, password=%s WHERE ip=%s"
         values = (name, location, target_api, username, password, original_ip)
     else:
         query = "UPDATE devices SET name=%s, location=%s, targetApi=%s, username=%s WHERE ip=%s"
         values = (name, location, target_api, username, original_ip)
+
     c.execute(query, values)
     affected = c.rowcount
     c.close()
@@ -248,6 +266,7 @@ def update_device(original_ip, name, location, target_api, username, password):
     return affected > 0
 
 def delete_device(ip):
+    """Menghapus perangkat dari database."""
     conn = get_db()
     c = conn.cursor()
     c.execute("DELETE FROM devices WHERE ip=%s", (ip,))
@@ -257,6 +276,7 @@ def delete_device(ip):
     return affected > 0
 
 def update_device_ping_status(ip: str, status: str):
+    """Memperbarui status perangkat setelah ping (TANPA MENGUBAH lastSync)."""
     conn = get_db()
     c = conn.cursor()
     query = "UPDATE devices SET status=%s WHERE ip=%s"
@@ -265,8 +285,10 @@ def update_device_ping_status(ip: str, status: str):
     conn.close()
 
 def get_devices_status():
+    """PERBAIKAN: Mengambil nama dan lokasi perangkat untuk polling AJAX di dasbor."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
+    # Menambahkan 'name' dan 'location' ke query
     c.execute("SELECT ip, name, location, status, lastSync FROM devices WHERE is_active = TRUE ORDER BY name")
     rows = c.fetchall()
     c.close()
@@ -278,14 +300,15 @@ def get_devices_status():
         result.append(row)
     return result
 
-# --- FUNGSI BARU UNTUK WORKER ---
+# --- FUNGSI BARU UNTUK WORKER (DIMODIFIKASI) ---
 
 def get_pending_api_events(limit, max_retries):
     """Mengambil event yang 'pending' atau 'failed' & belum mencapai max_retries."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
     query = """
-        SELECT e.*, d.targetApi, d.username as deviceUsername, d.password as devicePassword 
+        SELECT e.*, d.targetApi, d.username as deviceUsername, d.password as devicePassword,
+               d.location as location 
         FROM events e
         JOIN devices d ON e.deviceName = d.name
         WHERE (e.apiStatus = 'pending' OR e.apiStatus = 'failed')
@@ -320,12 +343,17 @@ def get_events(**filters):
     """Mengambil SEMUA event yang cocok dengan filter, TANPA PAGINASI."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
-    
-    # PERBAIKAN SQL (SPASI)
-    select_clause = "SELECT events.id, events.deviceName, devices.location, events.employeeId, events.name, DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date, events.time, events.eventDesc, events.pictureURL, events.localImagePath, events.syncType, events.apiStatus"
-    base_sql = " FROM events JOIN devices ON events.deviceName = devices.name" # <-- SPASI SUDAH ADA DI SINI
-    
+
+    select_clause = """
+        SELECT
+            events.id, events.deviceName, devices.location, events.employeeId, events.name,
+            DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date,
+            events.time, events.eventDesc, events.pictureURL, events.localImagePath,
+            events.syncType, events.apiStatus
+    """
+    base_sql = " FROM events JOIN devices ON events.deviceName = devices.name"
     where_clauses, values = [], []
+
     where_clauses.append("devices.is_active = TRUE")
 
     if filters.get('device'):
@@ -359,13 +387,22 @@ def get_event_by_id(event_id):
     """Mengambil SEMUA detail event (termasuk lokasi) untuk pop-up."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
-    query = "SELECT events.id, events.deviceName, devices.ip, devices.location, events.employeeId, events.name, DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date, events.time, events.eventDesc, events.pictureURL, events.localImagePath, events.syncType, events.apiStatus FROM events JOIN devices ON events.deviceName = devices.name WHERE events.id = %s"
+    query = """
+        SELECT
+            events.id, events.deviceName, devices.ip, devices.location, events.employeeId, events.name,
+            DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date,
+            events.time, events.eventDesc, events.pictureURL, events.localImagePath,
+            events.syncType, events.apiStatus
+        FROM events JOIN devices ON events.deviceName = devices.name
+        WHERE events.id = %s
+    """
     c.execute(query, (event_id,))
     event = c.fetchone()
     c.close()
     conn.close()
     return event
 
+# --- FUNGSI BARU ---
 def get_earliest_attendance_by_date(employee_ids, target_date, device_name):
     """
     Mengambil jam absen terawal untuk daftar employee_id pada tanggal DAN perangkat tertentu.
@@ -377,6 +414,7 @@ def get_earliest_attendance_by_date(employee_ids, target_date, device_name):
     conn = get_db()
     c = conn.cursor(dictionary=True)
     
+    # Membuat placeholder untuk query IN (...)
     format_strings = ','.join(['%s'] * len(employee_ids))
     
     query = f"""
@@ -390,6 +428,7 @@ def get_earliest_attendance_by_date(employee_ids, target_date, device_name):
         GROUP BY employeeId
     """
     
+    # Gabungkan parameter (device_name ditambahkan setelah target_date)
     params = [target_date, device_name] + employee_ids
     
     c.execute(query, tuple(params))
@@ -397,13 +436,22 @@ def get_earliest_attendance_by_date(employee_ids, target_date, device_name):
     c.close()
     conn.close()
     
+    # Ubah hasil query menjadi dictionary {employeeId: 'HH:MM:SS'}
     return {row['employeeId']: row['earliest_time'] for row in results}
+# --------------------
 
 def get_events_by_date(target_date, location=None, ip=None):
     """Mengambil event berdasarkan tanggal dengan urutan field yang rapi untuk API."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
-    base_query = "SELECT events.id, DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date, events.time, events.name, events.employeeId, events.deviceName, devices.ip, devices.location, events.eventDesc, events.syncType, events.apiStatus, events.pictureURL, events.localImagePath FROM events JOIN devices ON events.deviceName = devices.name WHERE events.date = %s AND devices.is_active = TRUE"
+    base_query = """
+        SELECT
+            events.id, DATE_FORMAT(STR_TO_DATE(events.date, '%Y-%m-%d'), '%d-%m-%Y') as date, events.time,
+            events.name, events.employeeId, events.deviceName, devices.ip, devices.location,
+            events.eventDesc, events.syncType, events.apiStatus, events.pictureURL, events.localImagePath
+        FROM events JOIN devices ON events.deviceName = devices.name
+        WHERE events.date = %s AND devices.is_active = TRUE
+    """
     values = [target_date]
     if location:
         base_query += " AND devices.location = %s"
@@ -417,8 +465,6 @@ def get_events_by_date(target_date, location=None, ip=None):
     c.close()
     conn.close()
     return events
-
-# --- FUNGSI-FUNGSI YANG HILANG SEBELUMNYA ---
 
 def get_dashboard_stats():
     """Mengambil data statistik ringkas untuk halaman dashboard."""
@@ -434,7 +480,7 @@ def get_dashboard_stats():
     today_str = date.today().strftime('%Y-%m-%d')
 
     filters_for_today = {'start_date': today_str, 'end_date': today_str}
-    events_today_list = get_events(**filters_for_today) 
+    events_today_list = get_events(**filters_for_today)
 
     events_today_count = len(events_today_list)
     failed_api_count = sum(1 for event in events_today_list if event.get('apiStatus') == 'failed')
@@ -469,6 +515,8 @@ def get_recent_events(limit=5):
     conn.close()
     return events
 
+# --- FUNGSI BARU UNTUK CLEANUP ---
+
 def cleanup_old_events_and_images(days_to_keep):
     """
     Menghapus event dari DB dan file gambar terkait yang lebih tua dari days_to_keep.
@@ -495,6 +543,8 @@ def cleanup_old_events_and_images(days_to_keep):
         # 2. Hapus file gambar dari disk
         for event in events_to_delete:
             try:
+                # Path di DB: 'images/DEVICE_NAME/YYYY-MM-DD/file.jpg'
+                # Path di disk: 'static/images/DEVICE_NAME/YYYY-MM-DD/file.jpg'
                 full_path = os.path.join("static", event['localImagePath'])
                 if os.path.exists(full_path):
                     os.remove(full_path)
@@ -514,13 +564,18 @@ def cleanup_old_events_and_images(days_to_keep):
         # 4. Coba hapus folder-folder kosong
         for dir_path in empty_dirs_to_check:
             try:
+                # Coba hapus folder tanggal (e.g., .../2025-01-01)
                 if os.path.isdir(dir_path) and not os.listdir(dir_path):
                     os.rmdir(dir_path)
+                    
+                    # Coba hapus folder device (e.g., .../DEVICE_NAME)
                     parent_dir = os.path.dirname(dir_path)
                     if os.path.isdir(parent_dir) and not os.listdir(parent_dir):
+                        # Pastikan kita tidak menghapus 'static/images'
                         safe_base_path = os.path.abspath(os.path.join("static", "images"))
                         if os.path.abspath(parent_dir).startswith(safe_base_path) and os.path.abspath(parent_dir) != safe_base_path:
                             os.rmdir(parent_dir)
+                            
             except Exception as e:
                 print(f"[CLEANUP_WARN] Gagal menghapus folder kosong {dir_path}: {e}")
 

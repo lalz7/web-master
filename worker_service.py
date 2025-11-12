@@ -17,7 +17,7 @@ import shutil
 from config import *
 import database as db
 
-# --- SETUP LOGGING (Sama seperti service lain) ---
+# --- SETUP LOGGING (Tidak berubah) ---
 LOG_LOCK = threading.Lock()
 loggers = {}
 
@@ -111,9 +111,16 @@ def _send_wa_request(target_number, message_text, wa_api_url):
         if not wa_api_url or not target_number:
             log_system(f"WA: URL API ({wa_api_url}) atau Nomor Tujuan ({target_number}) kosong.", level="WARN")
             return
+        
+        # Mengambil timeout dari DB
+        try:
+            timeout = int(db.get_setting('request_timeout', '30'))
+        except ValueError:
+            timeout = 30
+
         endpoint = wa_api_url.rstrip('/') + "/kirim-pesan-gambar-caption"
         payload = {'recipientId': target_number, 'recipient': target_number, 'message': message_text}
-        response = requests.post(endpoint, data=payload, timeout=10)
+        response = requests.post(endpoint, data=payload, timeout=timeout) # <-- Menggunakan timeout
         
         if response.status_code == 200:
             log_system(f"WA: Notifikasi berhasil dikirim ke {target_number}.", level="INFO")
@@ -200,8 +207,6 @@ def check_device_status(device, ping_max_fail, suspend_seconds):
                     send_whatsapp_notification(message, 'whatsapp_enabled')
                     
                 SUSPEND_UNTIL[ip] = time.time() + suspend_seconds
-            # else:
-                # Tidak perlu log setiap ping gagal, terlalu berisik
     else:
         with DEVICE_DATA_LOCK:
             if LAST_KNOWN_STATUS.get(ip) != 'online':
@@ -232,7 +237,10 @@ def check_device_status(device, ping_max_fail, suspend_seconds):
 # --- FUNGSI PENGIRIM API (Tugas Antrean) ---
 
 def download_image_from_event(event):
-    """Mencoba mengunduh gambar event jika ada. Di-copy dari sync_service."""
+    """
+    Mencoba mengunduh gambar event jika ada.
+    Menggunakan pengaturan dari DB.
+    """
     pictureURL = event.get('pictureURL')
     if not pictureURL:
         log_system(f"Event {event['id']} tidak punya pictureURL.", "WARN")
@@ -240,27 +248,47 @@ def download_image_from_event(event):
         
     auth = HTTPDigestAuth(event['deviceUsername'], event['devicePassword'])
     
-    for attempt in range(1, 3): # Coba 2x saja
+    # --- PENGATURAN BARU DARI DB ---
+    try:
+        max_retries = int(db.get_setting('worker_download_retries', '2'))
+        timeout = int(db.get_setting('request_timeout', '30'))
+    except ValueError:
+        max_retries = 2
+        timeout = 30
+    # -------------------------------
+
+    for attempt in range(1, max_retries + 1): # <-- Menggunakan var
         try:
-            r_img = requests.get(pictureURL, auth=auth, timeout=REQUEST_TIMEOUT)
+            r_img = requests.get(pictureURL, auth=auth, timeout=timeout) # <-- Menggunakan var
             if r_img.status_code == 200:
                 return r_img.content
             log_system(f"Gagal unduh gambar (event {event['id']}) (HTTP {r_img.status_code}).", "WARN")
         except requests.exceptions.RequestException as e:
             log_system(f"Error koneksi saat unduh gambar (event {event['id']}): {e}", "WARN")
-        time.sleep(1)
+        time.sleep(1) # Jeda 1 detik antar retry
     return None
 
+# --- FUNGSI process_api_event DIMODIFIKASI ---
 def process_api_event(event, api_fail_max_retry):
     """
     Satu fungsi yang dijalankan di thread untuk memproses satu event API.
+    Akan tetap mengirim API meskipun gambar gagal diunduh.
     """
     event_id = event['id']
     target_api = event['targetApi']
     retry_count = event['apiRetryCount']
     
     try:
-        # 1. Dapatkan gambar. Coba unduh dari 'localImagePath' dulu.
+        # 1. Buat payload dasar (data teks)
+        event_time_obj = datetime.datetime.strptime(f"{event['date']} {event['time']}", "%Y-%m-%d %H:%M:%S")
+        payload = {
+            "device": event["deviceName"],
+            "authId": event["employeeId"],
+            "date": event_time_obj.isoformat(),
+            "picture": None # Default adalah None (null)
+        }
+
+        # 2. Coba dapatkan gambar.
         image_content = None
         if event['localImagePath'] and os.path.exists(os.path.join("static", event['localImagePath'])):
             try:
@@ -269,30 +297,27 @@ def process_api_event(event, api_fail_max_retry):
             except Exception as e:
                 log_system(f"Gagal baca file lokal {event['localImagePath']}: {e}", "WARN")
 
-        # 2. Jika gagal baca lokal (atau tidak ada), unduh dari perangkat
+        # 3. Jika gagal baca lokal (atau tidak ada), unduh dari perangkat
         if not image_content:
             log_system(f"File lokal tidak ada untuk event {event_id}, mencoba unduh ulang...", "INFO")
             image_content = download_image_from_event(event)
         
-        # 3. Jika tetap tidak ada gambar, tandai GAGAL
-        if not image_content:
-            log_system(f"Gagal mendapatkan gambar untuk event {event_id}. Menandai 'failed'.", "ERROR")
-            db.update_event_api_status(event_id, 'failed', retry_count + 1)
-            return
+        # 4. Tambahkan gambar ke payload HANYA JIKA ADA
+        if image_content:
+            image_base64 = base64.b64encode(image_content).decode('utf-8')
+            payload["picture"] = image_base64
+        else:
+            # Ini adalah LOGIKA BARU: jangan berhenti, tapi catat.
+            log_system(f"Gagal mendapatkan gambar untuk event {event_id} (mungkin 404). Mengirim data tanpa gambar.", "WARN")
+            # Payload "picture" sudah None
 
-        # 4. Buat payload
-        image_base64 = base64.b64encode(image_content).decode('utf-8')
-        event_time_obj = datetime.datetime.strptime(f"{event['date']} {event['time']}", "%Y-%m-%d %H:%M:%S")
+        # 5. Kirim API (dengan atau tanpa gambar)
+        try:
+            timeout = int(db.get_setting('request_timeout', '30'))
+        except ValueError:
+            timeout = 30
         
-        payload = {
-            "device": event["deviceName"],
-            "authId": event["employeeId"],
-            "date": event_time_obj.isoformat(),
-            "picture": image_base64
-        }
-        
-        # 5. Kirim API (HANYA SATU KALI)
-        r_api = requests.post(target_api, json=payload, timeout=REQUEST_TIMEOUT)
+        r_api = requests.post(target_api, json=payload, timeout=timeout)
         
         if r_api.status_code in [200, 201]:
             # BERHASIL
@@ -303,17 +328,25 @@ def process_api_event(event, api_fail_max_retry):
             log_system(f"API event {event_id} (ke {target_api}) GAGAL (Status: {r_api.status_code}). Retry {retry_count + 1}/{api_fail_max_retry}", "WARN")
             db.update_event_api_status(event_id, 'failed', retry_count + 1)
             
-            # Cek apakah ini kegagalan terakhir
+            # --- NOTIFIKASI GAGAL (FORMAT BARU) ---
             if (retry_count + 1) >= api_fail_max_retry:
                 log_system(f"Event {event_id} GAGAL PERMANEN. Mengirim notifikasi.", "ERROR")
+                
+                # Ambil data tambahan
+                location = event.get('location') or '-'
+                waktu_str = event.get('time', 'N/A') + " WIB"
+                
                 message = (
-                    f"🔥 PERINGATAN API GAGAL 🔥\n\n"
-                    f"Event ID: *{event_id}*\n"
-                    f"Nama: *{event.get('name') or 'N/A'}* (ID: {event.get('employeeId') or 'N/A'})\n"
-                    f"Perangkat: *{event.get('deviceName')}*\n\n"
-                    f"Gagal terkirim ke Target API ({target_api}) setelah *{api_fail_max_retry}x percobaan*."
+                    f"⚠️ API GAGAL TERKIRIM ⚠️\n\n"
+                    f"Id Event: *{event_id}*\n"
+                    f"Nama: *{event.get('name') or 'N/A'}*\n"
+                    f"Device: *{event.get('deviceName')}*\n"
+                    f"Lokasi: *{location}*\n"
+                    f"Waktu: {waktu_str}\n\n"
+                    f"Event ini gagal terkirim setelah {api_fail_max_retry} kali percobaan."
                 )
                 send_whatsapp_notification(message, 'api_fail_enabled')
+                # --- AKHIR NOTIFIKASI ---
 
     except requests.exceptions.RequestException as e:
         # Gagal koneksi
@@ -322,19 +355,26 @@ def process_api_event(event, api_fail_max_retry):
         
         if (retry_count + 1) >= api_fail_max_retry:
             log_system(f"Event {event_id} GAGAL PERMANEN. Mengirim notifikasi.", "ERROR")
+            
+            # Ambil data tambahan
+            location = event.get('location') or '-'
+            waktu_str = event.get('time', 'N/A') + " WIB"
+
             message = (
-                f"🔥 PERINGATAN API GAGAL 🔥\n\n"
-                f"Event ID: *{event_id}*\n"
-                f"Nama: *{event.get('name') or 'N/A'}* (ID: {event.get('employeeId') or 'N/A'})\n"
-                f"Perangkat: *{event.get('deviceName')}*\n\n"
-                f"Gagal terkirim ke Target API ({target_api}) setelah *{api_fail_max_retry}x percobaan*.\n"
-                f"Error: Gagal koneksi."
+                f"⚠️ API GAGAL TERKIRIM ⚠️\n\n"
+                f"Id Event: *{event_id}*\n"
+                f"Nama: *{event.get('name') or 'N/A'}*\n"
+                f"Device: *{event.get('deviceName')}*\n"
+                f"Lokasi: *{location}*\n"
+                f"Waktu: {waktu_str}\n\n"
+                f"Event ini gagal terkirim setelah {api_fail_max_retry} kali percobaan."
             )
             send_whatsapp_notification(message, 'api_fail_enabled')
             
     except Exception as e:
         log_system(f"API event {event_id} GAGAL (Error: {e}). Retry {retry_count + 1}/{api_fail_max_retry}", "ERROR")
         db.update_event_api_status(event_id, 'failed', retry_count + 1)
+# --- AKHIR MODIFIKASI FUNGSI ---
 
 # --- MAIN LOOP (WORKER BARU) ---
 def main_worker():
@@ -390,13 +430,15 @@ def main_worker():
             if (now - last_api_time) > api_interval:
                 try:
                     api_fail_max_retry = int(db.get_setting('api_fail_max_retry', '5'))
+                    # --- PENGATURAN BARU DARI DB ---
+                    api_queue_limit = int(db.get_setting('api_queue_limit', '5'))
+                    # -------------------------------
                     
-                    # Ambil 5 event (limit=5)
-                    events_to_send = db.get_pending_api_events(limit=5, max_retries=api_fail_max_retry)
+                    events_to_send = db.get_pending_api_events(limit=api_queue_limit, max_retries=api_fail_max_retry) # <-- Menggunakan var
                     
                     if events_to_send:
                         log_system(f"Mengambil {len(events_to_send)} event dari antrean API untuk diproses...", "INFO")
-                        with ThreadPoolExecutor(max_workers=5) as executor:
+                        with ThreadPoolExecutor(max_workers=5) as executor: # max_workers 5 tetap (aman)
                             futures = [executor.submit(process_api_event, event, api_fail_max_retry) for event in events_to_send]
                             for future in futures:
                                 future.result()

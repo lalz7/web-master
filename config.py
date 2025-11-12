@@ -5,26 +5,17 @@ DB_USER = "izlal"
 DB_PASS = "1sampai8"
 DB_NAME = "web_master"
 
-# Pengaturan Polling
-POLL_INTERVAL = 2
-BATCH_MAX_RESULTS = 100
+# Pengaturan Global
 TIMEZONE = "+07:00"
 IMG_DIR = "static/images"
 
-# Pengaturan Direktori Log (BARU)
+# Pengaturan Direktori Log
 EVENT_LOG_DIR = "event_logs"       # Untuk log bersih (event yang diproses)
 SERVICE_LOG_DIR = "service_logs" # Untuk semua event mentah yang diterima
 
-# Pengaturan Ping & Suspend
-PING_MAX_FAIL = 5
-SUSPEND_SECONDS = 300
-
-# Pengaturan Catch-up
+# Pengaturan Catch-up (Masih digunakan oleh sync_service.py)
 CATCH_UP_CHUNK_MINUTES = 10
 BIG_CATCHUP_THRESHOLD_SECONDS = 3600 # 1 jam
-
-# Batas waktu dalam detik untuk menunggu respons dari perangkat
-REQUEST_TIMEOUT = 30
 
 # --- PEMETAAN EVENT HIKVISION (LENGKAP) ---
 EVENT_MAP = {

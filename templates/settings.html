@@ -38,6 +38,11 @@
                     <i class="fas fa-sync-alt me-2"></i>Sinkronisasi
                 </button>
             </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="advanced-tab" data-bs-toggle="tab" data-bs-target="#advanced-pane" type="button" role="tab" aria-controls="advanced-pane" aria-selected="false">
+                    <i class="fas fa-cogs me-2"></i>Lanjutan
+                </button>
+            </li>
         </ul>
     </div>
     <div class="card-body p-4">
@@ -132,7 +137,7 @@
             <div class="tab-pane fade" id="sync-pane" role="tabpanel" aria-labelledby="sync-tab">
                 <h5 class="mb-4">Pengaturan Worker & Sinkronisasi</h5>
                 <p class="text-muted">
-                    Pengaturan ini mengontrol seberapa sering layanan worker memeriksa perangkat dan mengirim data.
+                    Pengaturan yang mengontrol perilaku layanan `sync_service` (Pengambil) dan `worker_service` (Pekerja).
                 </p>
                 <hr>
                 <form action="{{ url_for('save_sync_settings') }}" method="POST">
@@ -155,11 +160,67 @@
                         <div class="col-md-6 mb-3">
                             <label for="suspend_seconds" class="form-label">Durasi Penangguhan (detik)</label>
                             <input type="number" class="form-control" id="suspend_seconds" name="suspend_seconds" min="30" value="{{ settings.suspend_seconds }}" required>
-                            <div class="form-text">Jeda waktu (detik) sebelum perangkat offline dicek kembali.</div>
+                            <div class="form-text">Jeda waktu (detik) sebelum perangkat `offline` dicek kembali.</div>
+                        </div>
+                        
+                        <div class="col-md-6 mb-3">
+                            <label for="event_sleep_delay" class="form-label">Jeda Antar Event (detik)</label>
+                            <input type="number" class="form-control" id="event_sleep_delay" name="event_sleep_delay" min="0" step="0.1" value="{{ settings.event_sleep_delay }}" required>
+                            <div class="form-text">Jeda antar-event saat `sync_service` mengambil data. (Cth: 0.5 atau 1).</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="realtime_tolerance" class="form-label">Toleransi Realtime (detik)</label>
+                            <input type="number" class="form-control" id="realtime_tolerance" name="realtime_tolerance" min="10" value="{{ settings.realtime_tolerance }}" required>
+                            <div class="form-text">Batas waktu (detik) event dianggap 'realtime' (Default: 120).</div>
+                        </div>
+                        </div>
+                    <div class="text-end mt-4">
+                        <button type="submit" class="btn btn-primary">Simpan Sinkronisasi</button>
+                    </div>
+                </form>
+            </div>
+            
+            <div class="tab-pane fade" id="advanced-pane" role="tabpanel" aria-labelledby="advanced-tab">
+                <h5 class="mb-4">Pengaturan Lanjutan</h5>
+                <p class="text-muted">
+                    Pengaturan teknis yang memengaruhi performa jaringan dan database. Ubah dengan hati-hati.
+                </p>
+                <hr>
+                <form action="{{ url_for('save_advanced_settings') }}" method="POST">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="poll_interval" class="form-label">Interval Pengambilan Event (detik)</label>
+                            <input type="number" class="form-control" id="poll_interval" name="poll_interval" min="1" value="{{ settings.poll_interval }}" required>
+                            <div class="form-text">Seberapa sering `sync_service` mengecek semua perangkat (Default: 2).</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="request_timeout" class="form-label">Batas Waktu Koneksi (detik)</label>
+                            <input type="number" class="form-control" id="request_timeout" name="request_timeout" min="10" value="{{ settings.request_timeout }}" required>
+                            <div class="form-text">Batas waktu untuk koneksi API dan unduh gambar (Default: 30).</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="api_queue_limit" class="form-label">Maks. Antrean API (Batch)</label>
+                            <input type="number" class="form-control" id="api_queue_limit" name="api_queue_limit" min="1" value="{{ settings.api_queue_limit }}" required>
+                            <div class="form-text">Jumlah event `pending` yang diambil `worker_service` (Default: 5).</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="event_batch_max" class="form-label">Maks. Event per Perangkat (Batch)</label>
+                            <input type="number" class="form-control" id="event_batch_max" name="event_batch_max" min="10" value="{{ settings.event_batch_max }}" required>
+                            <div class="form-text">Jumlah event maks yang diambil `sync_service` per siklus (Default: 100).</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="sync_download_retries" class="form-label">Jml Percobaan Unduh (Sync)</label>
+                            <input type="number" class="form-control" id="sync_download_retries" name="sync_download_retries" min="1" value="{{ settings.sync_download_retries }}" required>
+                            <div class="form-text">Jumlah percobaan `sync_service` mengunduh gambar (Default: 5).</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="worker_download_retries" class="form-label">Jml Percobaan Unduh (Worker)</label>
+                            <input type="number" class="form-control" id="worker_download_retries" name="worker_download_retries" min="1" value="{{ settings.worker_download_retries }}" required>
+                            <div class="form-text">Jumlah percobaan `worker_service` mengunduh ulang (Default: 2).</div>
                         </div>
                     </div>
                     <div class="text-end mt-4">
-                        <button type="submit" class="btn btn-primary">Simpan Sinkronisasi</button>
+                        <button type="submit" class="btn btn-primary">Simpan Pengaturan Lanjutan</button>
                     </div>
                 </form>
             </div>

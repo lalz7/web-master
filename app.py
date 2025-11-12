@@ -83,16 +83,24 @@ def settings():
         'whatsapp_enabled': db.get_setting('whatsapp_enabled', default='false'),
         'whatsapp_target_number': db.get_setting('whatsapp_target_number', default=''),
         'whatsapp_api_url': db.get_setting('whatsapp_api_url', default='http://10.1.105.164:60001'),
-        
-        # Pengaturan Notifikasi API Gagal
         'api_fail_enabled': db.get_setting('api_fail_enabled', default='false'),
         'api_fail_max_retry': db.get_setting('api_fail_max_retry', default='5'),
         
-        # Pengaturan Worker Baru
+        # Pengaturan Worker
         'ping_max_fail': db.get_setting('ping_max_fail', default='5'),
         'suspend_seconds': db.get_setting('suspend_seconds', default='300'),
         'worker_ping_interval': db.get_setting('worker_ping_interval', default='10'),
         'worker_api_interval': db.get_setting('worker_api_interval', default='15'),
+        
+        # 8 Pengaturan Baru
+        'poll_interval': db.get_setting('poll_interval', default='2'),
+        'event_sleep_delay': db.get_setting('event_sleep_delay', default='1'),
+        'realtime_tolerance': db.get_setting('realtime_tolerance', default='120'),
+        'request_timeout': db.get_setting('request_timeout', default='30'),
+        'api_queue_limit': db.get_setting('api_queue_limit', default='5'),
+        'event_batch_max': db.get_setting('event_batch_max', default='100'),
+        'sync_download_retries': db.get_setting('sync_download_retries', default='5'),
+        'worker_download_retries': db.get_setting('worker_download_retries', default='2'),
     }
     # Kirim SEMUA pengaturan sebagai satu variabel 'settings'
     return render_template('settings.html', settings=settings_data)
@@ -186,7 +194,7 @@ def save_notification_settings():
     return redirect(url_for('settings'))
 # ---------------------------------------------
 
-# --- RUTE BARU UNTUK SIMPAN SINKRONISASI ---
+# --- RUTE SIMPAN SINKRONISASI (DIMODIFIKASI) ---
 @app.route('/settings/sync', methods=['POST'])
 @login_required
 def save_sync_settings():
@@ -195,9 +203,35 @@ def save_sync_settings():
         db.update_setting('suspend_seconds', str(int(request.form.get('suspend_seconds', 300))))
         db.update_setting('worker_ping_interval', str(int(request.form.get('worker_ping_interval', 10))))
         db.update_setting('worker_api_interval', str(int(request.form.get('worker_api_interval', 15))))
+        
+        # Simpan 2 data baru
+        db.update_setting('event_sleep_delay', str(float(request.form.get('event_sleep_delay', 1))))
+        db.update_setting('realtime_tolerance', str(int(request.form.get('realtime_tolerance', 120))))
+
         flash('Pengaturan sinkronisasi berhasil disimpan.', 'success')
     except ValueError:
         flash('Semua nilai sinkronisasi harus berupa angka yang valid.', 'danger')
+    except Exception as e:
+        flash(f'Gagal menyimpan pengaturan: {e}', 'danger')
+        
+    return redirect(url_for('settings'))
+# -------------------------------------------
+
+# --- RUTE BARU UNTUK SIMPAN LANJUTAN ---
+@app.route('/settings/advanced', methods=['POST'])
+@login_required
+def save_advanced_settings():
+    try:
+        db.update_setting('poll_interval', str(int(request.form.get('poll_interval', 2))))
+        db.update_setting('request_timeout', str(int(request.form.get('request_timeout', 30))))
+        db.update_setting('api_queue_limit', str(int(request.form.get('api_queue_limit', 5))))
+        db.update_setting('event_batch_max', str(int(request.form.get('event_batch_max', 100))))
+        db.update_setting('sync_download_retries', str(int(request.form.get('sync_download_retries', 5))))
+        db.update_setting('worker_download_retries', str(int(request.form.get('worker_download_retries', 2))))
+
+        flash('Pengaturan lanjutan berhasil disimpan.', 'success')
+    except ValueError:
+        flash('Semua nilai pengaturan lanjutan harus berupa angka yang valid.', 'danger')
     except Exception as e:
         flash(f'Gagal menyimpan pengaturan: {e}', 'danger')
         

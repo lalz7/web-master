@@ -8,10 +8,11 @@ import re
 import base64
 import json
 import logging
-import threading # <-- PERBAIKAN: Baris ini ditambahkan kembali
+import threading # <-- Diperlukan untuk LOG_LOCK
 from concurrent.futures import ThreadPoolExecutor
 
 # Impor konfigurasi (termasuk EVENT_MAP) dan modul database kustom
+# Kita tidak lagi mengimpor POLL_INTERVAL, BATCH_MAX_RESULTS, REQUEST_TIMEOUT
 from config import *
 import database as db
 
@@ -102,7 +103,6 @@ def log_raw_event(device, event):
 # --- AKHIR SETUP LOGGING ---
 
 # --- Variabel Global & Kunci Thread ---
-# (Hanya LAST_SEEN_EVENT_ID yang tersisa)
 LAST_SEEN_EVENT_ID = {}
 DEVICE_DATA_LOCK = threading.Lock()
 # ----------------------------------------
@@ -120,7 +120,6 @@ def parse_iso_time(time_str):
 # ----------------------------------
 
 # --- FUNGSI DATABASE (Spesifik untuk service ini) ---
-# (Hanya fungsi yang relevan yang disimpan)
 def set_last_sync_time(ip, time_iso_str):
     try: dt = parse_iso_time(time_iso_str)
     except Exception: dt = datetime.datetime.now()
@@ -145,18 +144,25 @@ def get_last_sync_time(ip):
 
 # --- FUNGSI API & PROSES EVENT (DIMODIFIKASI) ---
 
-def download_image_with_retry(device, pictureURL, auth, max_retries=5, delay=2):
+def download_image_with_retry(device, pictureURL, auth):
     """
-    Mencoba mengunduh gambar dengan 5 kali percobaan.
-    (Fungsi ini tetap ada karena sync_service masih bertugas mengunduh gambar)
+    Mencoba mengunduh gambar.
+    Nilai max_retries dan request_timeout sekarang diambil dari database.
     """
     if not pictureURL:
         log(device, "URL Gambar kosong, download dilewati.", level="WARN")
         return None
         
+    try:
+        max_retries = int(db.get_setting('sync_download_retries', '5'))
+        timeout = int(db.get_setting('request_timeout', '30'))
+    except ValueError:
+        max_retries = 5
+        timeout = 30
+
     for attempt in range(1, max_retries + 1):
         try:
-            r_img = requests.get(pictureURL, auth=auth, timeout=REQUEST_TIMEOUT)
+            r_img = requests.get(pictureURL, auth=auth, timeout=timeout)
             if r_img.status_code == 200:
                 return r_img.content  # Sukses, kembalikan konten mentah (bytes)
             
@@ -166,7 +172,7 @@ def download_image_with_retry(device, pictureURL, auth, max_retries=5, delay=2):
             log(device, f"[Attempt {attempt}/{max_retries}] Error koneksi saat mengambil gambar: {e}", level="WARN")
         
         if attempt < max_retries:
-            time.sleep(delay) # Tunggu sebelum mencoba lagi
+            time.sleep(2) # Jeda 2 detik antar retry (tetap)
     
     log(device, f"Gagal mengunduh gambar setelah {max_retries} percobaan. URL: {pictureURL}", level="ERROR")
     return None # Gagal setelah semua percobaan
@@ -178,13 +184,13 @@ def iso8601_now(offset_seconds=0):
     t = datetime.datetime.now() - datetime.timedelta(seconds=offset_seconds)
     return t.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
 
-def get_events_from_device(device, start_time, end_time):
+def get_events_from_device(device, start_time, end_time, batch_max, timeout):
     ip, user, password = device.get("ip"), device.get("username"), device.get("password")
     url = f"http://{ip}/ISAPI/AccessControl/AcsEvent?format=json"
-    body = {"AcsEventCond": {"searchID": "batch", "searchResultPosition": 0, "maxResults": BATCH_MAX_RESULTS,
+    body = {"AcsEventCond": {"searchID": "batch", "searchResultPosition": 0, "maxResults": batch_max,
                              "major": 0, "minor": 0, "startTime": start_time, "endTime": end_time}}
     try:
-        r = requests.post(url, json=body, auth=HTTPDigestAuth(user, password), timeout=REQUEST_TIMEOUT)
+        r = requests.post(url, json=body, auth=HTTPDigestAuth(user, password), timeout=timeout)
         r.raise_for_status()
         return r.json().get("AcsEvent", {}).get("InfoList", [])
     except requests.exceptions.RequestException as e:
@@ -212,7 +218,14 @@ def save_event(event, device):
     except Exception:
         dt, date_value, time_value = None, "0000-00-00", "00:00:00"
 
-    sync_type = "realtime" if dt and abs((datetime.datetime.now() - dt).total_seconds()) <= 120 else "catch-up"
+    # --- PENGATURAN BARU DARI DB ---
+    try:
+        realtime_tolerance = int(db.get_setting('realtime_tolerance', '120'))
+    except ValueError:
+        realtime_tolerance = 120
+    # -------------------------------
+
+    sync_type = "realtime" if dt and abs((datetime.datetime.now() - dt).total_seconds()) <= realtime_tolerance else "catch-up"
     event_desc = get_event_desc(event)
     employee_id = int(event["employeeNoString"]) if event.get("employeeNoString", "").isdigit() else None
     
@@ -266,8 +279,6 @@ def save_event(event, device):
         c.execute(sql, values)
         db_event_id = c.lastrowid
         
-        # LOGIKA send_event_to_api() TELAH DIHAPUS DARI SINI
-        
         return True
     except mysql.connector.IntegrityError:
         log(device, f"Info: Event (ID: {eventId}) sudah ada di database, dilewati.")
@@ -287,26 +298,38 @@ def process_device(device):
         log(device, "Username atau Password belum diatur. Dilewati.", level="WARN")
         return
         
-    # LOGIKA PING, FAIL_COUNT, SUSPEND, NOTIFIKASI SUDAH DIHAPUS
-    # Worker service akan menangani ini
-    
     try:
+        # --- PENGATURAN BARU DARI DB ---
+        try:
+            batch_max = int(db.get_setting('event_batch_max', '100'))
+            timeout = int(db.get_setting('request_timeout', '30'))
+            sleep_delay = float(db.get_setting('event_sleep_delay', '1'))
+        except ValueError:
+            batch_max = 100
+            timeout = 30
+            sleep_delay = 1
+        # -------------------------------
+
         last_sync_str = get_last_sync_time(ip)
         now_time_str = iso8601_now()
         start_dt, end_dt = parse_iso_time(last_sync_str), parse_iso_time(now_time_str)
         time_diff_seconds = (end_dt - start_dt).total_seconds()
         
-        if time_diff_seconds > BIG_CATCHUP_THRESHOLD_SECONDS:
+        # Menggunakan pengaturan dari DB
+        if time_diff_seconds > BIG_CATCHUP_THRESHOLD_SECONDS: # BIG_CATCHUP masih dari config.py
             all_events = []
             current_start_dt = start_dt
             while current_start_dt < end_dt:
                 current_end_dt = min(current_start_dt + datetime.timedelta(minutes=CATCH_UP_CHUNK_MINUTES), end_dt)
-                chunk_events = get_events_from_device(device, current_start_dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE, current_end_dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE)
+                chunk_events = get_events_from_device(device, 
+                                                    current_start_dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE, 
+                                                    current_end_dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE,
+                                                    batch_max, timeout) # <-- Menggunakan var
                 if chunk_events: all_events.extend(chunk_events)
                 current_start_dt = current_end_dt
             events = all_events
         else:
-            events = get_events_from_device(device, last_sync_str, now_time_str)
+            events = get_events_from_device(device, last_sync_str, now_time_str, batch_max, timeout) # <-- Menggunakan var
         
         if not events: return
         
@@ -322,25 +345,28 @@ def process_device(device):
 
         saved_count = 0
         for e in new_events:
-            # Langkah 1: Selalu catat SEMUA event mentah
             log_raw_event(device, e)
             
-            # Jeda 1 detik antar event untuk menghindari "burst"
-            time.sleep(1)
+            # --- JEDA DINAMIS DARI DB ---
+            time.sleep(sleep_delay)
+            # ---------------------------
             
             event_desc = get_event_desc(e)
             
-            # Langkah 2: Periksa apakah ini event yang ingin kita proses lebih lanjut
             if event_desc == "Face Recognized":
-                # Langkah 3: Tulis log bersih SEKARANG, sebelum menyimpan ke DB
                 try:
                     time_value = datetime.datetime.strptime(e.get("time")[:19], "%Y-%m-%dT%H:%M:%S").strftime("%H:%M:%S")
-                    sync_type = "realtime" if abs((datetime.datetime.now() - parse_iso_time(e.get("time"))).total_seconds()) <= 120 else "catch-up"
+                    
+                    try:
+                        realtime_tolerance = int(db.get_setting('realtime_tolerance', '120'))
+                    except ValueError:
+                        realtime_tolerance = 120
+                    
+                    sync_type = "realtime" if abs((datetime.datetime.now() - parse_iso_time(e.get("time"))).total_seconds()) <= realtime_tolerance else "catch-up"
                     log(device, f"Mengambil event '{sync_type}' - {time_value} (ID: {e.get('serialNo')}) untuk '{e.get('name')}'...")
                 except Exception:
                     log(device, f"Mengambil event (ID: {e.get('serialNo')}) untuk '{e.get('name')}'...")
 
-                # Langkah 4: Coba simpan ke database
                 if save_event(e, device):
                     saved_count += 1
         
@@ -368,8 +394,6 @@ def main_sync():
     
     try:
         while True:
-            # LOGIKA CLEANUP SUDAH DIHAPUS
-            
             devices = db.get_all_devices()
             if not devices:
                 log_system("Tidak ada device yang terdaftar. Menunggu 15 detik..."), time.sleep(15)
@@ -379,8 +403,14 @@ def main_sync():
             with ThreadPoolExecutor(max_workers=len(devices)) as executor:
                 executor.map(process_device, devices)
             
-            # POLL_INTERVAL sekarang mengontrol seberapa sering kita MENGECEK semua perangkat
-            time.sleep(POLL_INTERVAL) 
+            # --- PENGATURAN BARU DARI DB ---
+            try:
+                poll_interval = int(db.get_setting('poll_interval', '2'))
+            except ValueError:
+                poll_interval = 2
+            # -------------------------------
+            
+            time.sleep(poll_interval) 
             
     except KeyboardInterrupt:
         log_system("Sinkronisasi (Sync Service) dihentikan oleh pengguna.")
