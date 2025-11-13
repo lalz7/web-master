@@ -380,24 +380,7 @@ def process_api_event(event, api_fail_max_retry):
 def main_worker():
     db.init_db()
     log_system("Memulai [Worker Service] - (Ping, Notifikasi, Antrean API, Cleanup)...")
-        # --- TUGAS 0: Inisialisasi Device SDK ---
-    try:
-        from database import get_all_devices
-        from sdk_service import HikvisionSDKService
-
-        all_devices = db.get_all_devices()
-        sdk_devices = [d for d in all_devices if d.get('type') == 'sdk']
-
-        for device in sdk_devices:
-            try:
-                log_system(f"[SDK INIT] Menghubungkan ke device SDK: {device['name']} ({device['ip']})", "INFO")
-                sdk_thread = threading.Thread(target=HikvisionSDKService(device).listen_events, daemon=True)
-                sdk_thread.start()
-            except Exception as e:
-                log_system(f"Gagal inisialisasi SDK device {device['ip']}: {e}", "ERROR")
-    except Exception as e:
-        log_system(f"Kesalahan saat inisialisasi SDK device: {e}", "ERROR")
-
+    
     last_ping_time = 0
     last_api_time = 0
     last_cleanup_time = time.time() - 86400 # Set ke kemarin agar langsung jalan

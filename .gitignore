@@ -1,6 +1,5 @@
 # Ignore directories for logs, static files, virtual environments, and cache
 event_logs
-sdk
 service_logs
 static
 venv

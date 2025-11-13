@@ -43,16 +43,9 @@ def init_db():
             password VARCHAR(255) NULL,
             status VARCHAR(20) DEFAULT 'offline',
             lastSync DATETIME NULL,
-            is_active BOOLEAN DEFAULT TRUE,
-            type VARCHAR(20) DEFAULT 'isapi' 
+            is_active BOOLEAN DEFAULT TRUE
         )
     """)
-        # Migrasi: tambahkan kolom type jika belum ada
-    try:
-        c.execute("ALTER TABLE devices ADD COLUMN type VARCHAR(20) DEFAULT 'isapi'")
-    except mysql.connector.Error:
-        pass  # Abaikan kalau kolom sudah ada
-
     
     # --- TABEL BARU: USERS ---
     c.execute("""
@@ -240,15 +233,13 @@ def get_all_unique_locations():
     conn.close()
     return locations
 
-def add_device(ip, name, location, target_api, username, password, device_type='isapi'):
+def add_device(ip, name, location, target_api, username, password):
     """Menambahkan perangkat baru ke database."""
     conn = get_db()
     c = conn.cursor()
     try:
-        c.execute("""
-            INSERT INTO devices (ip, name, location, targetApi, username, password, status, type)
-            VALUES (%s, %s, %s, %s, %s, %s, 'new', %s)
-        """, (ip, name, location, target_api, username, password, device_type))
+        c.execute("INSERT INTO devices (ip, name, location, targetApi, username, password, status) VALUES (%s, %s, %s, %s, %s, %s, 'new')",
+                  (ip, name, location, target_api, username, password))
         return True, "Perangkat berhasil ditambahkan."
     except mysql.connector.IntegrityError:
         return False, "Perangkat dengan IP tersebut sudah ada."
@@ -256,24 +247,17 @@ def add_device(ip, name, location, target_api, username, password, device_type='
         c.close()
         conn.close()
 
-def update_device(original_ip, name, location, target_api, username, password, device_type='isapi'):
+def update_device(original_ip, name, location, target_api, username, password):
     """Memperbarui data perangkat di database."""
     conn = get_db()
     c = conn.cursor()
+    # Hanya update password jika diisi, jika tidak, pertahankan yang lama
     if password:
-        query = """
-            UPDATE devices 
-            SET name=%s, location=%s, targetApi=%s, username=%s, password=%s, type=%s 
-            WHERE ip=%s
-        """
-        values = (name, location, target_api, username, password, device_type, original_ip)
+        query = "UPDATE devices SET name=%s, location=%s, targetApi=%s, username=%s, password=%s WHERE ip=%s"
+        values = (name, location, target_api, username, password, original_ip)
     else:
-        query = """
-            UPDATE devices 
-            SET name=%s, location=%s, targetApi=%s, username=%s, type=%s 
-            WHERE ip=%s
-        """
-        values = (name, location, target_api, username, device_type, original_ip)
+        query = "UPDATE devices SET name=%s, location=%s, targetApi=%s, username=%s WHERE ip=%s"
+        values = (name, location, target_api, username, original_ip)
 
     c.execute(query, values)
     affected = c.rowcount
