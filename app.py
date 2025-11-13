@@ -292,22 +292,26 @@ def manage_device_users(ip):
 @app.route('/devices/add', methods=['POST'])
 @login_required
 def add_device():
-    ip, name, location, target_api, username, password = (request.form.get(key) for key in ['ip', 'name', 'location', 'targetApi', 'username', 'password'])
+    ip, name, location, target_api, username, password, device_type = (
+    request.form.get(key) for key in ['ip', 'name', 'location', 'targetApi', 'username', 'password', 'type']
+)
     if not ip or not name or not username or not password:
         flash('IP, Nama, Username, dan Password wajib diisi.', 'danger')
     else:
-        success, message = db.add_device(ip, name, location, target_api, username, password)
+        success, message = db.add_device(ip, name, location, target_api, username, password, device_type)
         flash(message, 'success' if success else 'danger')
     return redirect(url_for('devices'))
 
 @app.route('/devices/update', methods=['POST'])
 @login_required
 def update_device():
-    ip, name, location, target_api, username, password = (request.form.get(key) for key in ['ip', 'name', 'location', 'targetApi', 'username', 'password'])
+    ip, name, location, target_api, username, password, device_type = (
+    request.form.get(key) for key in ['ip', 'name', 'location', 'targetApi', 'username', 'password', 'type']
+)
     if not ip or not name or not username:
         flash('IP, Nama, dan Username wajib diisi.', 'danger')
     else:
-        if db.update_device(ip, name, location, target_api, username, password):
+        if db.update_device(ip, name, location, target_api, username, password, device_type):
             flash('Perangkat berhasil diperbarui.', 'success')
         else:
             flash('Gagal memperbarui perangkat atau tidak ada perubahan data.', 'warning')

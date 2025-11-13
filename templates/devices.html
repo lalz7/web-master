@@ -35,6 +35,7 @@
                     <tr>
                         <th>IP Address</th>
                         <th>Nama</th>
+                        
                         <th>Lokasi</th>
                         <th>Sync Terakhir</th>
                         <th>Status</th>
@@ -122,6 +123,13 @@
                             <label for="password" class="form-label">Password</label>
                             <input type="password" class="form-control" name="password" required>
                         </div>
+                        <div class="mb-3">
+                            <label for="type" class="form-label">Tipe Perangkat</label>
+                            <select class="form-select" id="type" name="type" required>
+                                <option value="isapi" selected>ISAPI (Device Web)</option>
+                                <option value="sdk">SDK (Tanpa Web)</option>
+                            </select>
+                        </div>
                     </div>
                     <hr class="my-4">
                     <div class="mb-3">
@@ -171,6 +179,13 @@
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Password</label>
                             <input type="password" class="form-control" name="password" placeholder="Isi untuk mengubah">
+                        </div>
+                        <div class="mb-3">
+                            <label for="editType" class="form-label">Tipe Perangkat</label>
+                            <select class="form-select" id="editType" name="type" required>
+                                <option value="isapi">ISAPI (Device Web)</option>
+                                <option value="sdk">SDK (Tanpa Web)</option>
+                            </select>
                         </div>
                     </div>
                     <hr class="my-4">
