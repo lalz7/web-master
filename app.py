@@ -602,7 +602,183 @@ def api_get_logs_by_date(date_string):
     for event in events:
         event['imageUrl'] = url_for('static', filename=event['localImagePath']) if event.get('localImagePath') else event.get('pictureURL')
     return Response(json.dumps(events, indent=4), mimetype='application/json')
+# --- PENGGANTI FUNGSI api_hris_create_user (Logika Update) ---
+# (Pastikan 'datetime', 'base64', 'json', 'requests', 'HTTPDigestAuth', 'jsonify', 'time' sudah diimpor di atas)
 
+@app.route('/create', methods=['POST'])
+def api_hris_create_user():
+    """
+    Endpoint untuk menerima data user dari HRIS (FTDevice.php).
+    Logika ini secara otomatis menangani UPDATE (Delete-then-Re-add).
+    """
+    try:
+        data = request.form
+        
+        # 1. Ambil data dari form (sesuai FTDevice.php & FTUser.php)
+        employee_no = data.get('id')
+        name = data.get('name')
+        photo_base64 = data.get('fp') # Foto dalam format base64
+        
+        # Ambil data perangkat
+        device_ip = data.get('ip')
+        device_user = data.get('username')
+        device_pass = data.get('password')
+        
+        # Ambil dan format waktu
+        start_time_php = data.get('validStart') # Format: Y-m-d H:i:s
+        end_time_php = data.get('validEnd')     # Format: Y-m-d H:i:s
+
+        # Validasi data penting
+        if not all([employee_no, name, device_ip, device_user, device_pass, start_time_php, end_time_php]):
+            return jsonify({'error': 'Data tidak lengkap (id, name, ip, user, pass, waktu wajib diisi)'}), 400
+
+        # 2. Konversi format waktu
+        try:
+            dt_start = datetime.datetime.strptime(start_time_php, '%Y-%m-%d %H:%M:%S')
+            dt_end = datetime.datetime.strptime(end_time_php, '%Y-%m-%d %H:%M:%S')
+            formatted_start_time = dt_start.strftime('%Y-%m-%dT%H:%M:%S')
+            formatted_end_time = dt_end.strftime('%Y-%m-%dT%H:%M:%S')
+        except ValueError:
+            return jsonify({'error': 'Format waktu salah. Harap gunakan Y-m-d H:i:s'}), 400
+
+        # 3. Siapkan koneksi ke perangkat
+        auth = HTTPDigestAuth(device_user, device_pass)
+        
+        # 4. (MODIFIKASI) HAPUS USER LAMA (Abaikan jika gagal)
+        # Ini adalah langkah 'brute force' untuk memastikan data lama terhapus
+        try:
+            delete_user_url = f"http://{device_ip}/ISAPI/AccessControl/UserInfo/Delete?format=json"
+            delete_user_payload = {"UserInfoDelCond": {"employeeNoList": [{"employeeNo": employee_no}]}}
+            # Kirim perintah hapus. Kita tidak peduli hasilnya sukses atau gagal.
+            requests.put(delete_user_url, json=delete_user_payload, auth=auth, timeout=10)
+            # Beri jeda 1 detik agar perangkat selesai memproses penghapusan
+            time.sleep(1) 
+        except Exception:
+            # Abaikan semua error koneksi atau timeout pada saat hapus
+            pass 
+
+        # 5. BUAT USER BARU (Info Teks)
+        user_payload = {
+            "UserInfo": {
+                "employeeNo": employee_no, "name": name, "userType": "normal",
+                "gender": "unknown",
+                "Valid": {"enable": True, "beginTime": formatted_start_time, "endTime": formatted_end_time},
+                "doorRight": "1", "RightPlan": [{"doorNo": 1, "planTemplateNo": "1"}]
+            }
+        }
+        user_url = f"http://{device_ip}/ISAPI/AccessControl/UserInfo/Record?format=json"
+        
+        user_res = requests.post(user_url, json=user_payload, auth=auth, timeout=10)
+        
+        if user_res.status_code not in [200, 204]:
+            try:
+                user_res_data = user_res.json()
+            except:
+                 user_res_data = {'statusString': user_res.text}
+            # Jika errornya adalah 'userAlreadyExist' (karena delete gagal), kirim pesan jelas
+            if "userAlreadyExist" in str(user_res_data):
+                 return jsonify({'error': f"Gagal membuat pengguna: User {employee_no} sudah ada dan gagal dihapus sebelumnya."}), 500
+            return jsonify({'error': f"Gagal membuat pengguna: {user_res_data.get('statusString') or 'Error tidak diketahui'}"}), 502
+
+        # 6. Upload Foto (jika ada)
+        if photo_base64:
+            try:
+                photo_data = base64.b64decode(photo_base64)
+                photo_url = f"http://{device_ip}/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json"
+                json_payload = {"faceLibType": "blackFD", "FDID": "1", "employeeNo": employee_no, "FPID": employee_no}
+                files = {
+                    'FaceDataRecord': (None, json.dumps(json_payload), 'application/json'), 
+                    'FaceImage': ('photo_from_hris.jpg', photo_data, 'image/jpeg')
+                }
+                photo_res = requests.post(photo_url, files=files, auth=auth, timeout=20)
+                if photo_res.status_code not in [200, 204]:
+                    return jsonify({'success': True, 'message': 'Data teks pengguna diperbarui, tapi unggah foto baru gagal.'})
+            
+            except base64.binascii.Error:
+                return jsonify({'success': True, 'message': 'Data teks pengguna diperbarui, tapi format base64 foto salah.'})
+            except Exception as e:
+                return jsonify({'success': True, 'message': f'Data teks pengguna diperbarui, tapi koneksi unggah foto gagal: {e}'})
+
+        # 7. Sukses Penuh
+        return jsonify({'success': True, 'message': 'Pengguna berhasil diperbarui/dibuat.'}), 200
+
+    except requests.exceptions.RequestException as e:
+        return jsonify({'error': f"Error koneksi ke perangkat: {e}"}), 500
+    except Exception as e:
+        return jsonify({'error': f'Terjadi error internal di server Python: {e}'}), 500
+
+# --- AKHIR FUNGSI api_hris_create_user ---
+# --- TAMBAHAN API EKSTERNAL MANAJEMEN PERANGKAT (Tanpa API Key) ---
+
+@app.route('/api/devices', methods=['GET'])
+def api_ext_get_all_devices():
+    """ [READ] Mengambil daftar semua perangkat yang terdaftar di database. """
+    try:
+        devices = db.get_all_devices_for_ui()
+        return jsonify(devices), 200
+    except Exception as e:
+        return jsonify({'error': f'Gagal mengambil data: {e}'}), 500
+
+@app.route('/api/devices', methods=['POST'])
+def api_ext_add_device():
+    """ [CREATE] Menambahkan perangkat baru ke database. """
+    data = request.json
+    if not data:
+        return jsonify({'error': 'Request body harus berupa JSON.'}), 400
+        
+    ip = data.get('ip')
+    name = data.get('name')
+    username = data.get('username')
+    password = data.get('password')
+    location = data.get('location', '') # Opsional
+    target_api = data.get('targetApi', '') # Opsional
+    
+    if not all([ip, name, username, password]):
+        return jsonify({'error': 'Field ip, name, username, dan password wajib diisi.'}), 400
+    
+    success, message = db.add_device(ip, name, location, target_api, username, password)
+    
+    if success:
+        return jsonify({'success': True, 'message': message}), 201
+    else:
+        return jsonify({'success': False, 'message': message}), 409 # 409 Conflict (jika IP sudah ada)
+
+@app.route('/api/devices/<string:ip>', methods=['PUT'])
+def api_ext_update_device(ip):
+    """ [UPDATE] Memperbarui perangkat di database berdasarkan IP. """
+    data = request.json
+    if not data:
+        return jsonify({'error': 'Request body harus berupa JSON.'}), 400
+
+    # Ambil data yang diizinkan untuk di-update
+    name = data.get('name')
+    location = data.get('location')
+    target_api = data.get('targetApi')
+    username = data.get('username')
+    password = data.get('password') # Jika password kosong, fungsi DB akan mengabaikannya
+    
+    # Memastikan data minimal ada
+    if not all([name, username]):
+        return jsonify({'error': 'Field name dan username wajib diisi.'}), 400
+
+    success = db.update_device(ip, name, location, target_api, username, password)
+    
+    if success:
+        return jsonify({'success': True, 'message': 'Perangkat berhasil diperbarui.'}), 200
+    else:
+        return jsonify({'success': False, 'message': 'Perangkat tidak ditemukan atau tidak ada perubahan.'}), 404
+
+@app.route('/api/devices/<string:ip>', methods=['DELETE'])
+def api_ext_delete_device(ip):
+    """ [DELETE] Menghapus perangkat dari database. """
+    success = db.delete_device(ip)
+    
+    if success:
+        return jsonify({'success': True, 'message': 'Perangkat berhasil dihapus.'}), 200
+    else:
+        return jsonify({'success': False, 'message': 'Perangkat tidak ditemukan.'}), 404
+
+# --- AKHIR TAMBAHAN API MANAJEMEN PERANGKAT ---
 # --- ENTRY POINT ---
 if __name__ == '__main__':
     db.init_db() # Pastikan DB diinisialisasi
