@@ -13,6 +13,7 @@ from flask_login import (LoginManager, UserMixin, login_user, logout_user,
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
 import database as db
+import ai_service
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'ganti-dengan-kunci-rahasia-yang-sangat-acak-dan-panjang')
@@ -602,6 +603,26 @@ def api_get_logs_by_date(date_string):
     for event in events:
         event['imageUrl'] = url_for('static', filename=event['localImagePath']) if event.get('localImagePath') else event.get('pictureURL')
     return Response(json.dumps(events, indent=4), mimetype='application/json')
+
+
+@app.route('/api/ask-ai', methods=['POST'])
+def api_ask_ai():
+    """Endpoint untuk Chatbot AI di Frontend."""
+    data = request.json
+    question = data.get('question')
+    
+    if not question:
+        return jsonify({'error': 'Pertanyaan kosong'}), 400
+    
+    # Memanggil logic cerdas dari file ai_service.py
+    # yang sudah memiliki akses ke konteks DB lengkap.
+    result = ai_service.ask_gemini(question)
+    
+    if result["success"]:
+        return jsonify({'answer': result["answer"]})
+    else:
+        return jsonify({'error': result["answer"]}), 500
+    
 # --- PENGGANTI FUNGSI api_hris_create_user (Logika Update) ---
 # (Pastikan 'datetime', 'base64', 'json', 'requests', 'HTTPDigestAuth', 'jsonify', 'time' sudah diimpor di atas)
 
