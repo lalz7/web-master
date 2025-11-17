@@ -1,4 +1,5 @@
 # Ignore directories for logs, static files, virtual environments, and cache
+.env
 event_logs
 service_logs
 static

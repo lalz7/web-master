@@ -10,14 +10,14 @@ import os
 
 # 1. Masukkan API Key Gemini Anda di sini
 # (Dapatkan gratis di https://aistudio.google.com/)
-GEMINI_API_KEY = "AIzaSyC39kH30iHIWsXF7fDVlD5JxiGIpA8gSXg" 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 try:
     genai.configure(api_key=GEMINI_API_KEY)
     
     # Konfigurasi Model (Flash lebih cepat dan ringan)
     model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
+        model_name="gemini-2.5-",
         generation_config={
             "temperature": 0.8,     # Sedikit lebih kreatif (0.8) agar lebih luwes
             "top_p": 0.95,
