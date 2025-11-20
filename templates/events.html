@@ -139,8 +139,15 @@
 
 <script>
 $(document).ready(function() {
+    // --- LOGIKA BARU: Ambil parameter 'q' dari URL ---
+    const urlParams = new URLSearchParams(window.location.search);
+    const initialSearch = urlParams.get('q') || '';
+
     // 1. Inisialisasi DataTables
     $('#eventsTable').DataTable({
+        "search": {
+            "search": initialSearch // Isi otomatis search box
+        },
         "order": [[ 0, "desc" ]],
         "language": {
             "search": "Cari:",

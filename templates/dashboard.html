@@ -27,6 +27,14 @@
         display: flex; align-items: center; justify-content: center;
         border-radius: 50%;
     }
+
+    /* Tambahan agar link pada card tidak merusak gaya teks */
+    .card-link {
+        text-decoration: none;
+        color: inherit;
+        display: block;
+        height: 100%;
+    }
 </style>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -36,59 +44,67 @@
 
 <div class="row g-4 mb-4">
     <div class="col-md-6 col-lg-3">
-        <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-success">
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-center">
-                    <h4 class="mb-0">{{ stats.online_devices or 0 }}</h4>
-                     <div class="bg-success bg-opacity-10 text-success rounded-3 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
-                        <i class="fas fa-wifi fa-lg"></i>
+        <a href="{{ url_for('devices') }}" class="card-link">
+            <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-success">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h4 class="mb-0">{{ stats.online_devices or 0 }}</h4>
+                         <div class="bg-success bg-opacity-10 text-success rounded-3 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
+                            <i class="fas fa-wifi fa-lg"></i>
+                        </div>
                     </div>
+                    <p class="text-muted mb-0 mt-2">Perangkat Online</p>
                 </div>
-                <p class="text-muted mb-0 mt-2">Perangkat Online</p>
             </div>
-        </div>
+        </a>
     </div>
 
     <div class="col-md-6 col-lg-3">
-        <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-primary">
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-center">
-                    <h4 class="mb-0">{{ stats.events_today or 0 }}</h4>
-                    <div class="bg-primary bg-opacity-10 text-primary rounded-3 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
-                        <i class="fas fa-calendar-day fa-lg"></i>
+        <a href="{{ url_for('events') }}" class="card-link">
+            <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-primary">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h4 class="mb-0">{{ stats.events_today or 0 }}</h4>
+                        <div class="bg-primary bg-opacity-10 text-primary rounded-3 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
+                            <i class="fas fa-calendar-day fa-lg"></i>
+                        </div>
                     </div>
+                    <p class="text-muted mb-0 mt-2">Event Hari Ini</p>
                 </div>
-                <p class="text-muted mb-0 mt-2">Event Hari Ini</p>
             </div>
-        </div>
+        </a>
     </div>
 
     <div class="col-md-6 col-lg-3">
-        <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-info">
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-center">
-                    <h4 class="mb-0">{{ stats.catchup_today or 0 }}</h4>
-                    <div class="bg-info bg-opacity-10 text-info rounded-3 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
-                        <i class="fas fa-history fa-lg"></i>
+        <a href="{{ url_for('events', q='catch-up') }}" class="card-link">
+            <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-info">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h4 class="mb-0">{{ stats.catchup_today or 0 }}</h4>
+                        <div class="bg-info bg-opacity-10 text-info rounded-3 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
+                            <i class="fas fa-history fa-lg"></i>
+                        </div>
                     </div>
+                    <p class="text-muted mb-0 mt-2">Event Susulan</p>
                 </div>
-                <p class="text-muted mb-0 mt-2">Event Susulan</p>
             </div>
-        </div>
+        </a>
     </div>
 
     <div class="col-md-6 col-lg-3">
-        <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-danger">
-            <div class="card-body">
-                 <div class="d-flex justify-content-between align-items-center">
-                    <h4 class="mb-0">{{ stats.failed_api or 0 }}</h4>
-                    <div class="bg-danger bg-opacity-10 text-danger rounded-3 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
-                        <i class="fas fa-exclamation-triangle fa-lg"></i>
+        <a href="{{ url_for('events', q='failed') }}" class="card-link">
+            <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-danger">
+                <div class="card-body">
+                     <div class="d-flex justify-content-between align-items-center">
+                        <h4 class="mb-0">{{ stats.failed_api or 0 }}</h4>
+                        <div class="bg-danger bg-opacity-10 text-danger rounded-3 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
+                            <i class="fas fa-exclamation-triangle fa-lg"></i>
+                        </div>
                     </div>
+                    <p class="text-muted mb-0 mt-2">API Gagal Hari Ini</p>
                 </div>
-                <p class="text-muted mb-0 mt-2">API Gagal Hari Ini</p>
             </div>
-        </div>
+        </a>
     </div>
 </div>
 
@@ -251,12 +267,11 @@ $(document).ready(function() {
         });
     }
 
-    // Panggil fungsi saat halaman dimuat
     setCurrentDate();
     pollDeviceStatus();
     setInterval(pollDeviceStatus, 15000);
 
-    // Logika Modal Detail Event
+    // Logika Modal Detail Event (Sama seperti sebelumnya)
     const eventDetailModal = document.getElementById('eventDetailModal');
     if (eventDetailModal) {
         const modalDialog = document.getElementById('event-modal-dialog');

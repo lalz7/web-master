@@ -594,6 +594,91 @@ def api_delete_user(ip, employee_no):
         return jsonify({'error': f"Gagal hapus: {response_data.get('errorMsg') or 'Respons tidak terduga.'}"}), 502
     except Exception as e:
         return jsonify({'error': f"Error koneksi: {e}"}), 500
+    
+# --- API BULK UPDATE EXPIRY (BARU) ---
+@app.route('/api/devices/<string:ip>/users/bulk_update_expiry', methods=['POST'])
+@login_required
+def api_bulk_update_expiry(ip):
+    device = db.get_device_by_ip(ip)
+    if not device: return jsonify({'error': 'Perangkat tidak ditemukan'}), 404
+
+    auth = HTTPDigestAuth(device['username'], device['password'])
+    req_data = request.json
+    
+    users_list = req_data.get('users', [])
+    start_time_str = req_data.get('startTime')
+    end_time_str = req_data.get('endTime')
+
+    if not users_list or not start_time_str or not end_time_str:
+        return jsonify({'error': 'Data pengguna atau waktu tidak lengkap.'}), 400
+
+    try:
+        formatted_start_time = start_time_str + ":00"
+        formatted_end_time = end_time_str + ":00"
+    except Exception:
+        return jsonify({'error': 'Format waktu tidak valid.'}), 400
+
+    success_count = 0
+    fail_count = 0
+    errors = []
+
+    # URL untuk Modify UserInfo
+    url = f"http://{device['ip']}/ISAPI/AccessControl/UserInfo/Modify?format=json"
+
+    # Loop setiap user dan kirim request ke perangkat
+    for user in users_list:
+        emp_no = user.get('employeeNo')
+        name = user.get('name')
+        
+        # Payload harus menyertakan nama dan tipe user agar tidak error/data hilang
+        payload = {
+            "UserInfo": {
+                "employeeNo": emp_no,
+                "name": name,
+                "userType": "normal", # Default normal
+                "Valid": {
+                    "enable": True,
+                    "beginTime": formatted_start_time,
+                    "endTime": formatted_end_time
+                }
+            }
+        }
+
+        try:
+            # Menggunakan PUT untuk update
+            res = requests.put(url, json=payload, auth=auth, timeout=5)
+            if res.status_code in [200, 204]:
+                # Cek status string dari body response jika ada
+                if res.content:
+                    res_json = res.json()
+                    if res_json.get('statusCode') == 1 or res_json.get('statusString') == 'OK':
+                         success_count += 1
+                    else:
+                         fail_count += 1
+                         errors.append(f"User {emp_no}: {res_json.get('subStatusCode')}")
+                else:
+                    success_count += 1
+            else:
+                fail_count += 1
+                errors.append(f"User {emp_no}: HTTP {res.status_code}")
+        
+        except Exception as e:
+            fail_count += 1
+            errors.append(f"User {emp_no}: {str(e)}")
+        
+        # Beri jeda sedikit agar perangkat tidak overload
+        time.sleep(0.1)
+
+    message = f"Berhasil update {success_count} pengguna."
+    if fail_count > 0:
+        message += f" Gagal: {fail_count}. Cek log console untuk detail."
+        print(f"[BULK UPDATE ERROR] {errors}")
+
+    return jsonify({
+        'success': True, 
+        'message': message,
+        'stats': {'success': success_count, 'fail': fail_count}
+    })
 
 @app.route('/api/logs/by-date/<string:date_string>')
 def api_get_logs_by_date(date_string):
