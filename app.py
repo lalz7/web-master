@@ -14,6 +14,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
 import database as db
 import ai_service
+from dotenv import load_dotenv
+load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'ganti-dengan-kunci-rahasia-yang-sangat-acak-dan-panjang')
