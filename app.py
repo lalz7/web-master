@@ -240,8 +240,8 @@ def save_advanced_settings():
         
     return redirect(url_for('settings'))
 # -------------------------------------------
+# --- Update route index di app.py ---
 
-# --- ROUTE UTAMA APLIKASI (TETAP SAMA) ---
 @app.route('/')
 @login_required
 def index():
@@ -251,10 +251,19 @@ def index():
     event_limit = len(devices_status) 
     recent_events = db.get_recent_events(limit=event_limit) or []
     
+    # Data Grafik 1: Tren Mingguan
+    chart_data = db.get_weekly_analytics()
+    
+    # Data Grafik 2: Jam Sibuk (BARU)
+    busy_data = db.get_hourly_analytics()
+    
     return render_template('dashboard.html',
                            stats=stats,
                            recent_events=recent_events,
-                           devices_status=devices_status)
+                           devices_status=devices_status,
+                           chart_data=chart_data,
+                           busy_data=busy_data) # <-- Jangan lupa ditambahkan
+
 
 @app.route('/events')
 @login_required

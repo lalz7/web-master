@@ -13,9 +13,9 @@
         border-top: 4px solid;
     }
     /* Warna Border Disesuaikan */
-    .border-primary { border-color: #0d6efd !important; } /* Biru Biasa */
+    .border-primary { border-color: #0d6efd !important; }
     .border-success { border-color: #198754 !important; }
-    .border-info { border-color: #0dcaf0 !important; }    /* Biru Muda */
+    .border-info { border-color: #0dcaf0 !important; }
     .border-danger { border-color: #dc3545 !important; }
 
     .list-group-item-action:hover {
@@ -28,7 +28,6 @@
         border-radius: 50%;
     }
 
-    /* Tambahan agar link pada card tidak merusak gaya teks */
     .card-link {
         text-decoration: none;
         color: inherit;
@@ -60,16 +59,16 @@
     </div>
 
     <div class="col-md-6 col-lg-3">
-        <a href="{{ url_for('events') }}" class="card-link">
+        <a href="{{ url_for('events', q='realtime') }}" class="card-link">
             <div class="card h-100 shadow-sm border-0 card-hover card-border-top border-primary">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-center">
-                        <h4 class="mb-0">{{ stats.events_today or 0 }}</h4>
+                        <h4 class="mb-0">{{ stats.realtime_today or 0 }}</h4>
                         <div class="bg-primary bg-opacity-10 text-primary rounded-3 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
                             <i class="fas fa-calendar-day fa-lg"></i>
                         </div>
                     </div>
-                    <p class="text-muted mb-0 mt-2">Event Hari Ini</p>
+                    <p class="text-muted mb-0 mt-2">Event Realtime</p>
                 </div>
             </div>
         </a>
@@ -105,6 +104,28 @@
                 </div>
             </div>
         </a>
+    </div>
+</div>
+
+<div class="card shadow-sm border-0 mb-4">
+    <div class="card-header bg-transparent d-flex justify-content-between align-items-center py-3">
+        <h5 class="mb-0"><i class="fas fa-clock me-2"></i>Pola Jam Sibuk (Rata-rata Harian)</h5>
+    </div>
+    <div class="card-body">
+        <div style="position: relative; height: 320px; width: 100%;">
+            <canvas id="busyChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm border-0 mb-4">
+    <div class="card-header bg-transparent d-flex justify-content-between align-items-center py-3">
+        <h5 class="mb-0"><i class="fas fa-chart-line me-2"></i>Tren Aktivitas Harian (7 Hari Terakhir)</h5>
+    </div>
+    <div class="card-body">
+        <div style="position: relative; height: 400px; width: 100%;">
+            <canvas id="activityChart"></canvas>
+        </div>
     </div>
 </div>
 
@@ -224,28 +245,30 @@
 
 {% block scripts %}
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script id="chart-data-source" type="application/json">
+    {{ chart_data | default({}) | tojson | safe }}
+</script>
+<script id="busy-data-source" type="application/json">
+    {{ busy_data | default({}) | tojson | safe }}
+</script>
+
 <script>
 $(document).ready(function() {
+    // --- UTILS ---
     function updateTimestamp() {
         const now = new Date();
-        const timeString = now.toLocaleTimeString('id-ID', {
-            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
-        });
-        $('#last-updated').text('Status diperbarui pada ' + timeString + ' WIB');
+        $('#last-updated').text('Status diperbarui pada ' + now.toLocaleTimeString('id-ID', {hour: '2-digit', minute: '2-digit', second: '2-digit'}) + ' WIB');
     }
-
     function setCurrentDate() {
-        const now = new Date();
-        const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-        const dateString = now.toLocaleDateString('id-ID', options);
-        $('#current-date').text(dateString);
+        $('#current-date').text(new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
     }
-
+    
+    // --- POLLING ---
     function pollDeviceStatus() {
         $.ajax({
-            url: '/api/devices_status',
-            method: 'GET',
-            dataType: 'json',
+            url: '/api/devices_status', method: 'GET', dataType: 'json',
             success: function(devicesData) {
                 devicesData.forEach(function(device) {
                     const statusBadge = $('#status-' + device.ip.replace(/\./g, '-'));
@@ -253,7 +276,6 @@ $(document).ready(function() {
                         let newStatusText = device.status;
                         let newBadgeClass = (device.status === 'online') ? 'bg-success-subtle text-success-emphasis' :
                                             (device.status === 'offline') ? 'bg-secondary-subtle text-secondary-emphasis' : 'bg-danger-subtle text-danger-emphasis';
-
                         if (statusBadge.text().trim() !== newStatusText) {
                             statusBadge.removeClass('bg-success-subtle text-success-emphasis bg-secondary-subtle text-secondary-emphasis bg-danger-subtle text-danger-emphasis').addClass(newBadgeClass).text(newStatusText);
                         }
@@ -261,62 +283,173 @@ $(document).ready(function() {
                 });
                 updateTimestamp();
             },
-            error: function(xhr, status, error) {
-                console.warn("Gagal polling status di dasbor:", status, error);
+            error: function(xhr) { console.warn("Polling error:", xhr.status); }
+        });
+    }
+    setCurrentDate(); pollDeviceStatus(); setInterval(pollDeviceStatus, 15000);
+
+    // ==================================================
+    // 1. CHART JAM SIBUK (STACKED BAR CHART)
+    // ==================================================
+    const busyCanvas = document.getElementById('busyChart');
+    if (busyCanvas) {
+        const ctxBusy = busyCanvas.getContext('2d');
+        
+        // Parsing Data
+        let busyData = { realtime: [], catchup: [] };
+        try { 
+            const raw = document.getElementById('busy-data-source').textContent;
+            busyData = JSON.parse(raw); 
+            if (Array.isArray(busyData)) { busyData = { realtime: busyData, catchup: new Array(24).fill(0) }; }
+        } catch (e) {}
+
+        const hourLabels = Array.from({length: 24}, (_, i) => (i < 10 ? '0' + i : i) + ':00');
+
+        new Chart(ctxBusy, {
+            type: 'bar',
+            data: {
+                labels: hourLabels,
+                datasets: [
+                    {
+                        label: 'Realtime',
+                        data: busyData.realtime || [],
+                        backgroundColor: '#0d6efd', // Biru Tua
+                        borderRadius: 2,
+                    },
+                    {
+                        label: 'Susulan',
+                        data: busyData.catchup || [],
+                        backgroundColor: '#0dcaf0', // Biru Muda
+                        borderRadius: 2,
+                    }
+                ]
+            },
+            options: {
+                responsive: true, 
+                maintainAspectRatio: false,
+                plugins: {
+                    // [PERBAIKAN] Pindahkan legenda ke BAWAH sesuai request
+                    legend: { display: true, position: 'bottom' }, 
+                    tooltip: {
+                        mode: 'index', 
+                        intersect: false,
+                        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                        titleColor: '#212529', 
+                        bodyColor: '#212529', 
+                        borderColor: '#dee2e6', 
+                        borderWidth: 1,
+                        callbacks: {
+                            footer: function(tooltipItems) {
+                                let total = 0;
+                                tooltipItems.forEach(function(tooltipItem) {
+                                    total += tooltipItem.parsed.y;
+                                });
+                                return 'Total Rata-rata: ' + total.toFixed(1);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { 
+                        stacked: true, 
+                        grid: { display: false } 
+                    },
+                    y: { 
+                        stacked: true, 
+                        beginAtZero: true, 
+                        grid: { borderDash: [2, 4], color: '#f0f0f0' },
+                        title: { display: true, text: 'Rata-rata Log' } 
+                    }
+                }
             }
         });
     }
 
-    setCurrentDate();
-    pollDeviceStatus();
-    setInterval(pollDeviceStatus, 15000);
+    // ==================================================
+    // 2. CHART TREN AKTIVITAS (LINE CHART)
+    // ==================================================
+    const activityCanvas = document.getElementById('activityChart');
+    if (activityCanvas) {
+        const ctxAct = activityCanvas.getContext('2d');
+        let chartData = { labels: [], datasets: {} };
+        try { chartData = JSON.parse(document.getElementById('chart-data-source').textContent); } catch (e) {}
 
-    // Logika Modal Detail Event (Sama seperti sebelumnya)
+        const dailyTotals = new Array(chartData.labels ? chartData.labels.length : 0).fill(0);
+        if (chartData.datasets) {
+            Object.values(chartData.datasets).forEach(dataPoints => {
+                dataPoints.forEach((val, idx) => { if (typeof val === 'number') dailyTotals[idx] += val; });
+            });
+        }
+
+        const formattedLabels = (chartData.labels || []).map((date, idx) => [date, `Total: ${dailyTotals[idx]}`]);
+
+        const lineColors = ['#0d6efd', '#198754', '#dc3545', '#ffc107', '#6610f2', '#0dcaf0', '#fd7e14', '#20c997'];
+        const datasets = [];
+        let colorIdx = 0;
+        
+        if (chartData.datasets) {
+            for (const [devName, pts] of Object.entries(chartData.datasets)) {
+                datasets.push({
+                    label: devName, data: pts,
+                    borderColor: lineColors[colorIdx % lineColors.length],
+                    backgroundColor: lineColors[colorIdx % lineColors.length],
+                    borderWidth: 2, tension: 0.3, pointRadius: 3, pointHoverRadius: 6, fill: false
+                });
+                colorIdx++;
+            }
+        }
+
+        new Chart(ctxAct, {
+            type: 'line',
+            data: { labels: formattedLabels, datasets: datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { 
+                        position: 'bottom', 
+                        labels: { usePointStyle: true, boxWidth: 10, padding: 20 } 
+                    },
+                    tooltip: {
+                        mode: 'index', intersect: false,
+                        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                        titleColor: '#212529', bodyColor: '#212529', borderColor: '#dee2e6', borderWidth: 1
+                    }
+                },
+                scales: {
+                    y: { beginAtZero: true, grid: { borderDash: [2, 4], color: '#f0f0f0' }, title: { display: true, text: 'Jumlah Log' } },
+                    x: { grid: { display: false }, ticks: { font: { size: 11 } } }
+                }
+            }
+        });
+    }
+
+    // Logika Modal Detail (Tetap)
     const eventDetailModal = document.getElementById('eventDetailModal');
     if (eventDetailModal) {
         const modalDialog = document.getElementById('event-modal-dialog');
         const spinner = document.getElementById('modal-spinner');
         const content = document.getElementById('modal-content-area');
         const imageElement = document.getElementById('event-image');
-
         eventDetailModal.addEventListener('show.bs.modal', function (event) {
             const row = event.relatedTarget;
             const eventId = row.dataset.eventId;
-            content.classList.add('d-none');
-            spinner.classList.remove('d-none');
-            imageElement.src = '';
-            modalDialog.classList.remove('modal-sm', 'modal-lg', 'modal-xl');
-            fetch(`/api/event/${eventId}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) { console.error(data.error); spinner.classList.add('d-none'); return; }
-                    document.getElementById('event-name').textContent = data.name || 'N/A';
-                    document.getElementById('event-desc').textContent = data.eventDesc || '-';
-                    document.getElementById('event-id').textContent = data.id;
-                    document.getElementById('event-device').textContent = data.deviceName || '-';
-                    document.getElementById('event-location').textContent = data.location || '-';
-                    document.getElementById('event-datetime').textContent = `${data.date} ${data.time}`;
-                    document.getElementById('event-employee-id').textContent = data.employeeId || '-';
-                    document.getElementById('event-sync-type').textContent = data.syncType || '-';
-                    document.getElementById('event-api-status').textContent = data.apiStatus || '-';
-                    imageElement.src = data.imageUrl || '';
-                    imageElement.onload = function() {
-                        const imageWidth = this.naturalWidth;
-                        modalDialog.classList.remove('modal-sm', 'modal-lg', 'modal-xl');
-                        if (imageWidth >= 900) modalDialog.classList.add('modal-xl');
-                        else if (imageWidth >= 700) modalDialog.classList.add('modal-lg');
-                        spinner.classList.add('d-none');
-                        content.classList.remove('d-none');
-                    };
-                    imageElement.onerror = function() {
-                        spinner.classList.add('d-none');
-                        content.classList.remove('d-none');
-                    };
-                })
-                .catch(error => {
-                    console.error('Fetch error:', error);
-                    spinner.classList.add('d-none');
-                });
+            content.classList.add('d-none'); spinner.classList.remove('d-none'); imageElement.src = '';
+            fetch(`/api/event/${eventId}`).then(r => r.json()).then(data => {
+                if(data.error) { spinner.classList.add('d-none'); return; }
+                document.getElementById('event-name').textContent = data.name || 'N/A';
+                document.getElementById('event-desc').textContent = data.eventDesc || '-';
+                document.getElementById('event-id').textContent = data.id;
+                document.getElementById('event-device').textContent = data.deviceName || '-';
+                document.getElementById('event-location').textContent = data.location || '-';
+                document.getElementById('event-datetime').textContent = `${data.date} ${data.time}`;
+                document.getElementById('event-employee-id').textContent = data.employeeId || '-';
+                document.getElementById('event-sync-type').textContent = data.syncType || '-';
+                document.getElementById('event-api-status').textContent = data.apiStatus || '-';
+                imageElement.src = data.imageUrl || '';
+                imageElement.onload = () => { spinner.classList.add('d-none'); content.classList.remove('d-none'); };
+                imageElement.onerror = () => { spinner.classList.add('d-none'); content.classList.remove('d-none'); };
+            }).catch(e => spinner.classList.add('d-none'));
         });
     }
 });

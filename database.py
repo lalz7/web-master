@@ -469,7 +469,7 @@ def cleanup_old_events_and_images(days_to_keep):
 
 # --- FUNGSI DASHBOARD ---
 def get_dashboard_stats():
-    """Mengambil statistik dashboard (Total, Online, Event Hari Ini, Catchup Hari Ini, Failed)."""
+    """Mengambil statistik dashboard (Total, Online, Realtime Hari Ini, Catchup Hari Ini, Failed)."""
     conn = get_db()
     c = conn.cursor(dictionary=True)
 
@@ -480,13 +480,14 @@ def get_dashboard_stats():
     c.execute("SELECT COUNT(*) as online_devices FROM devices WHERE status = 'online' AND is_active = TRUE")
     online_devices = c.fetchone()['online_devices']
 
-    # 2. Statistik Event Hari Ini (Total, Failed, Catch-up)
+    # 2. Statistik Event Hari Ini
     today_str = date.today().strftime('%Y-%m-%d')
     c.execute("""
         SELECT 
             COUNT(*) as total,
             SUM(CASE WHEN apiStatus='failed' THEN 1 ELSE 0 END) as failed,
-            SUM(CASE WHEN syncType='catch-up' THEN 1 ELSE 0 END) as catchup
+            SUM(CASE WHEN syncType='catch-up' THEN 1 ELSE 0 END) as catchup,
+            SUM(CASE WHEN syncType='realtime' THEN 1 ELSE 0 END) as realtime
         FROM events 
         WHERE date = %s
     """, (today_str,))
@@ -501,9 +502,138 @@ def get_dashboard_stats():
         'online_devices': online_devices,
         'events_today': res['total'],
         'failed_api': int(res['failed'] or 0),
-        'catchup_today': int(res['catchup'] or 0) # <-- DATA BARU
+        'catchup_today': int(res['catchup'] or 0),
+        'realtime_today': int(res['realtime'] or 0) # <-- DATA BARU
     }
 
+def get_weekly_analytics():
+    """
+    Mengambil statistik 'Face Recognized' per perangkat selama 7 hari terakhir.
+    Output diformat khusus untuk Chart.js.
+    """
+    conn = get_db()
+    c = conn.cursor(dictionary=True)
+    
+    # 1. Tentukan rentang tanggal (7 hari terakhir termasuk hari ini)
+    today = date.today()
+    dates = [(today - timedelta(days=i)) for i in range(6, -1, -1)]
+    date_labels = [d.strftime('%d-%m-%Y') for d in dates] # Label Sumbu X
+    date_keys = [d.strftime('%Y-%m-%d') for d in dates]   # Key untuk pencocokan DB
+    
+    # 2. Ambil daftar semua perangkat aktif (agar device yang 0 log tetap muncul)
+    devices = get_all_devices()
+    device_names = [d['name'] for d in devices]
+    
+    # 3. Siapkan struktur data awal (semua di-set ke 0)
+    # Format: {'Device A': [0,0,0,0,0,0,0], 'Device B': ...}
+    datasets = {name: [0] * 7 for name in device_names}
+    
+    # 4. Query Database (Hanya hitung yang SUKSES / Face Recognized)
+    start_date_str = date_keys[0]
+    end_date_str = date_keys[-1]
+    
+    # Query ini mengelompokkan jumlah log berdasarkan tanggal dan nama device
+    query = """
+        SELECT date, deviceName, COUNT(*) as total
+        FROM events
+        WHERE STR_TO_DATE(date, '%Y-%m-%d') BETWEEN STR_TO_DATE(%s, '%Y-%m-%d') AND STR_TO_DATE(%s, '%Y-%m-%d')
+          AND eventDesc = 'Face Recognized'
+        GROUP BY date, deviceName
+    """
+    
+    try:
+        c.execute(query, (start_date_str, end_date_str))
+        rows = c.fetchall()
+        
+        # 5. Isi data ke struktur datasets
+        for row in rows:
+            d_name = row['deviceName']
+            # Pastikan tanggal dari DB formatnya sesuai
+            # Kadang DB simpan YYYY-MM-DD, kadang DD-MM-YYYY tergantung input,
+            # Asumsi di sini kolom 'date' di DB konsisten YYYY-MM-DD sesuai insert script.
+            # Jika tidak, kita perlu parsing. Kita coba matching string langsung dulu.
+            
+            row_date = row['date'] # Misal '2023-10-25'
+            
+            if d_name in datasets:
+                try:
+                    # Cari index tanggal ini ada di urutan ke berapa (0-6)
+                    # Kita coba parsing tanggal dari row DB ke format YYYY-MM-DD untuk memastikan match
+                    if '-' in row_date:
+                        # Cek apakah format DD-MM-YYYY atau YYYY-MM-DD
+                        parts = row_date.split('-')
+                        if len(parts[0]) == 4: # YYYY-MM-DD
+                            idx = date_keys.index(row_date)
+                        else: # DD-MM-YYYY (format legacy)
+                            # Ubah ke YYYY-MM-DD untuk dicocokkan
+                            fmt_date = f"{parts[2]}-{parts[1]}-{parts[0]}"
+                            if fmt_date in date_keys:
+                                idx = date_keys.index(fmt_date)
+                            else:
+                                continue
+                        
+                        datasets[d_name][idx] = row['total']
+                except ValueError:
+                    pass # Tanggal tidak masuk range 7 hari, skip
+                    
+    except Exception as e:
+        print(f"Error analytics: {e}")
+    finally:
+        c.close()
+        conn.close()
+
+    return {
+        'labels': date_labels,
+        'datasets': datasets
+    }
+
+# --- Update fungsi ini di database.py ---
+
+def get_hourly_analytics():
+    """
+    Mengambil RATA-RATA log per jam, dipisah antara Realtime vs Catch-up.
+    """
+    conn = get_db()
+    c = conn.cursor(dictionary=True)
+    
+    # Struktur baru: Dictionary dengan 2 list
+    hourly_data = {
+        'realtime': [0] * 24,
+        'catchup': [0] * 24
+    }
+    
+    try:
+        query = """
+            SELECT 
+                SUBSTRING(time, 1, 2) as hour_str, 
+                SUM(CASE WHEN syncType='realtime' THEN 1 ELSE 0 END) as realtime,
+                SUM(CASE WHEN syncType='catch-up' THEN 1 ELSE 0 END) as catchup
+            FROM events
+            WHERE eventDesc = 'Face Recognized'
+            AND STR_TO_DATE(date, '%Y-%m-%d') >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+            GROUP BY hour_str
+        """
+        c.execute(query)
+        rows = c.fetchall()
+        
+        for row in rows:
+            try:
+                h = int(row['hour_str'])
+                if 0 <= h < 24:
+                    # Hitung rata-rata (bagi 7 hari)
+                    hourly_data['realtime'][h] = round(row['realtime'] / 7, 1)
+                    hourly_data['catchup'][h] = round(row['catchup'] / 7, 1)
+            except (ValueError, TypeError):
+                pass
+                
+    except Exception as e:
+        print(f"Error hourly analytics: {e}")
+    finally:
+        c.close()
+        conn.close()
+        
+    return hourly_data
+    
 # --- FUNGSI STATISTIK AI (LENGKAP) ---
 def get_ai_context_stats():
     """
