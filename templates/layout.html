@@ -154,7 +154,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     
-    <script>
+<script>
     document.addEventListener('DOMContentLoaded', function() {
         const aiFab = document.getElementById('ai-fab');
         const aiChatWindow = document.getElementById('ai-chat-window');
@@ -162,21 +162,21 @@
         const sendBtn = document.getElementById('send-question');
         const userInput = document.getElementById('user-question');
         const chatMessages = document.getElementById('chat-messages');
+        
+        // [BARU] Variabel untuk menyimpan riwayat percakapan
+        let conversationHistory = [];
 
-        // --- LOGIKA TOGGLE (Tombol Hilang/Muncul) ---
+        // --- LOGIKA TOGGLE ---
         function toggleChat() {
             const isHidden = aiChatWindow.classList.contains('d-none');
-            
             if (isHidden) {
-                // Buka Chat
                 aiChatWindow.classList.remove('d-none');
-                aiFab.classList.add('scale-out'); // Hilangkan tombol
-                setTimeout(() => userInput.focus(), 100); // Fokus ke input
+                aiFab.classList.add('scale-out');
+                setTimeout(() => userInput.focus(), 100);
                 scrollToBottom();
             } else {
-                // Tutup Chat
                 aiChatWindow.classList.add('d-none');
-                aiFab.classList.remove('scale-out'); // Munculkan tombol
+                aiFab.classList.remove('scale-out');
             }
         }
 
@@ -195,12 +195,24 @@
             bubble.style.maxWidth = "85%";
             bubble.style.fontSize = "0.9rem";
             
-            let formattedText = text.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            bubble.innerHTML = formattedText;
+            // Format Markdown sederhana (Bold & Newline)
+            let formattedText = text
+                .replace(/\n/g, '<br>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\* (.*?)(<br>|$)/g, '&bull; $1$2'); // Bullet points
             
+            bubble.innerHTML = formattedText;
             msgDiv.appendChild(bubble);
             chatMessages.appendChild(msgDiv);
             scrollToBottom();
+            
+            // [BARU] Simpan ke history lokal
+            if (text !== "Gagal koneksi ke server." && !text.startsWith("Maaf, ada error")) {
+                 conversationHistory.push({
+                    role: isUser ? "user" : "model",
+                    text: text
+                });
+            }
         }
 
         function showLoading() {
@@ -209,7 +221,7 @@
             loaderDiv.className = "d-flex align-items-start mb-3";
             loaderDiv.innerHTML = `
                 <div class="bg-white border rounded p-2 shadow-sm text-muted fst-italic" style="font-size: 0.8rem;">
-                    <i class="fas fa-sparkles fa-spin me-1 text-info"></i> Menganalisis...
+                    <i class="fas fa-sparkles fa-spin me-1 text-info"></i> Sedang berpikir...
                 </div>`;
             chatMessages.appendChild(loaderDiv);
             scrollToBottom();
@@ -228,15 +240,20 @@
             const question = userInput.value.trim();
             if (!question) return;
 
+            // Tampilkan pesan user di UI
             appendMessage(question, true);
             userInput.value = '';
             showLoading();
 
             try {
+                // [BARU] Kirim pertanyaan BESERTA history ke backend
                 const response = await fetch('/api/ask-ai', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ question: question })
+                    body: JSON.stringify({ 
+                        question: question,
+                        history: conversationHistory // Kirim riwayat
+                    })
                 });
 
                 const data = await response.json();

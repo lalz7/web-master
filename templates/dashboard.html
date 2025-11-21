@@ -18,8 +18,9 @@
     .border-info { border-color: #0dcaf0 !important; }
     .border-danger { border-color: #dc3545 !important; }
 
-    .list-group-item-action:hover {
-        background-color: #f8f9fa;
+    /* Hapus hover effect pada list event karena sudah tidak bisa diklik */
+    .list-group-item {
+        cursor: default;
     }
 
     .activity-icon {
@@ -120,7 +121,7 @@
 
 <div class="card shadow-sm border-0 mb-4">
     <div class="card-header bg-transparent d-flex justify-content-between align-items-center py-3">
-        <h5 class="mb-0"><i class="fas fa-chart-line me-2"></i>Tren Aktivitas Harian (7 Hari Terakhir)</h5>
+        <h5 class="mb-0"><i class="fas fa-chart-line me-2"></i>Tren Aktivitas Harian</h5>
     </div>
     <div class="card-body">
         <div style="position: relative; height: 400px; width: 100%;">
@@ -139,7 +140,7 @@
             <div class="card-body p-0">
                 <div class="list-group list-group-flush">
                     {% for event in recent_events %}
-                    <a href="#" class="list-group-item list-group-item-action py-3" data-event-id="{{ event.id }}" data-bs-toggle="modal" data-bs-target="#eventDetailModal">
+                    <div class="list-group-item py-3">
                         <div class="d-flex w-100 align-items-center">
                             <div class="flex-shrink-0 me-3">
                                 <div class="activity-icon
@@ -166,7 +167,7 @@
                                 <small class="text-muted ms-2" style="width: 55px; text-align: right;">{{ event.time }}</small>
                             </div>
                         </div>
-                    </a>
+                    </div>
                     {% else %}
                     <div class="text-center text-muted p-5">
                         <p class="mb-0">Belum ada event terbaru.</p>
@@ -208,39 +209,6 @@
     </div>
 </div>
 
-<div class="modal fade" id="eventDetailModal" tabindex="-1" aria-labelledby="eventDetailModalLabel" aria-hidden="true">
-  <div class="modal-dialog" id="event-modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="eventDetailModalLabel">Detail Event</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body">
-        <div id="modal-spinner" class="text-center my-5">
-            <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>
-        </div>
-        <div id="modal-content-area" class="d-none">
-            <div class="text-center">
-                <img id="event-image" src="" class="img-fluid rounded mb-3" alt="Foto Event" style="max-height: 70vh;">
-            </div>
-            <hr>
-            <h4><strong id="event-name"></strong></h4>
-            <p class="text-muted mb-3" id="event-desc"></p>
-
-            <dl class="row">
-                <dt class="col-sm-4">Id User</dt> <dd class="col-sm-8"><span id="event-employee-id"></span></dd>
-                <dt class="col-sm-4">Id Event</dt> <dd class="col-sm-8"><span id="event-id"></span></dd>
-                <dt class="col-sm-4">Device</dt> <dd class="col-sm-8"><span id="event-device"></span></dd>
-                <dt class="col-sm-4">Lokasi</dt> <dd class="col-sm-8"><span id="event-location"></span></dd>
-                <dt class="col-sm-4">Tanggal & Waktu</dt> <dd class="col-sm-8"><span id="event-datetime"></span></dd>
-                <dt class="col-sm-4">Tipe Sinkronisasi</dt> <dd class="col-sm-8"><span id="event-sync-type"></span></dd>
-                <dt class="col-sm-4">Status API</dt> <dd class="col-sm-8"><span id="event-api-status"></span></dd>
-            </dl>
-            </div>
-      </div>
-    </div>
-  </div>
-</div>
 {% endblock %}
 
 {% block scripts %}
@@ -317,7 +285,7 @@ $(document).ready(function() {
                         borderRadius: 2,
                     },
                     {
-                        label: 'Susulan',
+                        label: 'Catch-up (Susulan)',
                         data: busyData.catchup || [],
                         backgroundColor: '#0dcaf0', // Biru Muda
                         borderRadius: 2,
@@ -328,7 +296,6 @@ $(document).ready(function() {
                 responsive: true, 
                 maintainAspectRatio: false,
                 plugins: {
-                    // [PERBAIKAN] Pindahkan legenda ke BAWAH sesuai request
                     legend: { display: true, position: 'bottom' }, 
                     tooltip: {
                         mode: 'index', 
@@ -421,35 +388,6 @@ $(document).ready(function() {
                     x: { grid: { display: false }, ticks: { font: { size: 11 } } }
                 }
             }
-        });
-    }
-
-    // Logika Modal Detail (Tetap)
-    const eventDetailModal = document.getElementById('eventDetailModal');
-    if (eventDetailModal) {
-        const modalDialog = document.getElementById('event-modal-dialog');
-        const spinner = document.getElementById('modal-spinner');
-        const content = document.getElementById('modal-content-area');
-        const imageElement = document.getElementById('event-image');
-        eventDetailModal.addEventListener('show.bs.modal', function (event) {
-            const row = event.relatedTarget;
-            const eventId = row.dataset.eventId;
-            content.classList.add('d-none'); spinner.classList.remove('d-none'); imageElement.src = '';
-            fetch(`/api/event/${eventId}`).then(r => r.json()).then(data => {
-                if(data.error) { spinner.classList.add('d-none'); return; }
-                document.getElementById('event-name').textContent = data.name || 'N/A';
-                document.getElementById('event-desc').textContent = data.eventDesc || '-';
-                document.getElementById('event-id').textContent = data.id;
-                document.getElementById('event-device').textContent = data.deviceName || '-';
-                document.getElementById('event-location').textContent = data.location || '-';
-                document.getElementById('event-datetime').textContent = `${data.date} ${data.time}`;
-                document.getElementById('event-employee-id').textContent = data.employeeId || '-';
-                document.getElementById('event-sync-type').textContent = data.syncType || '-';
-                document.getElementById('event-api-status').textContent = data.apiStatus || '-';
-                imageElement.src = data.imageUrl || '';
-                imageElement.onload = () => { spinner.classList.add('d-none'); content.classList.remove('d-none'); };
-                imageElement.onerror = () => { spinner.classList.add('d-none'); content.classList.remove('d-none'); };
-            }).catch(e => spinner.classList.add('d-none'));
         });
     }
 });

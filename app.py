@@ -706,13 +706,11 @@ def api_ask_ai():
     """Endpoint untuk Chatbot AI di Frontend."""
     data = request.json
     question = data.get('question')
-    
+    # Ambil history dari request, default list kosong jika tidak ada
+    history = data.get('history', []) 
     if not question:
         return jsonify({'error': 'Pertanyaan kosong'}), 400
-    
-    # Memanggil logic cerdas dari file ai_service.py
-    # yang sudah memiliki akses ke konteks DB lengkap.
-    result = ai_service.ask_gemini(question)
+    result = ai_service.ask_gemini(question, history)
     
     if result["success"]:
         return jsonify({'answer': result["answer"]})

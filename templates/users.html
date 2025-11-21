@@ -48,9 +48,10 @@
                             <input type="checkbox" id="selectAll" class="form-check-input">
                         </th>
                         <th style="width: 10%;">Id</th>
-                        <th style="width: 35%;">Nama</th>
+                        <th style="width: 30%;">Nama</th>
                         <th style="width: 15%;">Jenis Kelamin</th>
-                        <th style="width: 25%;">Masa Berlaku</th>
+                        <th style="width: 15%;">Kehadiran</th>
+                        <th style="width: 15%;">Masa Berlaku</th>
                         <th class="no-sort" style="width: 10%;">Aksi</th>
                     </tr>
                 </thead>
@@ -212,7 +213,6 @@ $(document).ready(function() {
     const getNowDateTime = () => new Date(new Date() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
     const getFutureDateTime = (years) => { const d = new Date(); d.setFullYear(d.getFullYear() + years); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
     
-    // [BARU] Fungsi untuk mendapatkan hari ini pukul 17:00:00
     const getTodayAt17 = () => {
         const d = new Date();
         d.setHours(17, 0, 0, 0);
@@ -232,13 +232,8 @@ $(document).ready(function() {
         try {
             const parts = isoString.split('T');
             const datePart = parts[0].split('-'); 
-            
-            // Ambil jam dan menit (HH:mm)
             let timePart = "00:00";
-            if (parts[1]) {
-                timePart = parts[1].split('+')[0].substring(0, 5);
-            }
-            
+            if (parts[1]) { timePart = parts[1].split('+')[0].substring(0, 5); }
             return `${datePart[2]}/${datePart[1]}/${datePart[0]} ${timePart}`;
         } catch(e) { return isoString; }
     };
@@ -257,16 +252,19 @@ $(document).ready(function() {
                 usersDataCache = users; 
                 const tableBody = tableElement.find('tbody');
                 if (users.length === 0) {
-                    tableBody.html('<tr><td colspan="6" class="text-center text-muted py-5">Tidak ada pengguna.</td></tr>');
+                    tableBody.html('<tr><td colspan="7" class="text-center text-muted py-5">Tidak ada pengguna.</td></tr>');
                 } else {
                     users.forEach(user => {
                         const gender = getGenderDisplay(user.gender);
-                        // Ambil masa berlaku untuk display
                         let expiryDisplay = '-';
                         if (user.Valid && user.Valid.endTime) {
                             expiryDisplay = formatDisplayDate(user.Valid.endTime);
                         }
                         
+                        // [REVISI] Tentukan value untuk sorting
+                        // Jika ada waktu hadir, gunakan itu. Jika tidak, pakai 'zzzzzz' agar di paling bawah saat ASC
+                        const attendanceOrder = user.attendance_time ? user.attendance_time : 'zzzzzz';
+
                         tableBody.append(`<tr>
                             <td class="text-center">
                                 <input type="checkbox" class="form-check-input user-select" value="${user.employeeNo}" data-name="${user.name}">
@@ -274,6 +272,7 @@ $(document).ready(function() {
                             <td><strong>${user.employeeNo}</strong></td>
                             <td>${user.name}</td>
                             <td>${gender}</td>
+                            <td data-order="${attendanceOrder}">${user.attendance_time || '-'}</td>
                             <td>${expiryDisplay}</td>
                             <td class="btn-action-group">
                                 <button class="btn btn-sm btn-outline-warning edit-btn" data-id="${user.employeeNo}" title="Edit Data"><i class="fas fa-edit"></i></button>
@@ -284,7 +283,8 @@ $(document).ready(function() {
                 }
                 
                 dataTable = tableElement.DataTable({
-                    "order": [[1, "asc"]], 
+                    // [REVISI] Sort by Kolom 4 (Kehadiran) ASC, lalu Kolom 1 (ID) ASC
+                    "order": [[4, "asc"], [1, "asc"]], 
                     "language": {
                         "search": "Cari:",
                         "lengthMenu": "Tampilkan _MENU_ entri",
@@ -293,13 +293,14 @@ $(document).ready(function() {
                     },
                     "columnDefs": [
                         { "orderable": false, "targets": 0 }, 
-                        { "orderable": false, "targets": 5 }, 
+                        { "orderable": false, "targets": 6 }, 
                         { "className": "text-center", "targets": 0 },
                         { "className": "text-right", "targets": 1 },
                         { "className": "text-left", "targets": 2 },
                         { "className": "text-left", "targets": 3 },
-                        { "className": "text-center", "targets": 4 },
-                        { "className": "text-center", "targets": 5 }
+                        { "className": "text-center", "targets": 4 }, 
+                        { "className": "text-center", "targets": 5 }, 
+                        { "className": "text-center", "targets": 6 }  
                     ]
                 });
                 $('#table-container').fadeIn();
@@ -308,7 +309,7 @@ $(document).ready(function() {
             .finally(() => $('#loading-spinner').hide());
     }
 
-    // --- LOGIKA CHECKBOX & BULK ACTION ---
+    // --- LOGIKA LAINNYA (Checkbox, Modal, dll) ---
     
     $('#selectAll').on('change', function() {
         const isChecked = $(this).is(':checked');
@@ -332,11 +333,8 @@ $(document).ready(function() {
     $('#bulkExpiryBtn').on('click', function() {
         const selectedCount = $('.user-select:checked').length;
         $('#modal-selected-count').text(selectedCount);
-        
-        // [MODIFIKASI] Set default time: Hari ini pukul 17:00
         $('#bulk-start-time').val(getNowDateTime());
-        $('#bulk-end-time').val(getTodayAt17()); // Menggunakan fungsi baru
-
+        $('#bulk-end-time').val(getTodayAt17()); 
         bulkModal.show();
     });
 
@@ -377,13 +375,7 @@ $(document).ready(function() {
             
             if (res.ok) {
                 bulkModal.hide();
-                Swal.fire({
-                    title: 'Berhasil!',
-                    text: data.message,
-                    icon: 'success',
-                    timer: 2000,
-                    showConfirmButton: false
-                });
+                Swal.fire({ title: 'Berhasil!', text: data.message, icon: 'success', timer: 2000, showConfirmButton: false });
                 loadUsers();
             } else {
                 throw new Error(data.error || 'Gagal update massal.');
@@ -395,8 +387,6 @@ $(document).ready(function() {
         }
     });
 
-
-    // --- FITUR LAMA (EDIT, ADD, DELETE) ---
     const editModal = new bootstrap.Modal($('#editUserModal')[0]);
     
     tableElement.on('click', '.edit-btn', function() {
@@ -426,7 +416,6 @@ $(document).ready(function() {
         editModal.show();
     });
 
-    // Validasi Foto
     $('#edit-photo-input, #add-photo-input').on('change', function() {
         const file = this.files[0];
         const isAdd = $(this).attr('id') === 'add-photo-input';
@@ -451,7 +440,6 @@ $(document).ready(function() {
         reader.readAsDataURL(file);
     });
 
-    // Simpan Perubahan Individual (Edit)
     $('#saveUserChangesBtn').on('click', async function() {
         if (!document.getElementById('editUserForm').checkValidity()) { document.getElementById('editUserForm').reportValidity(); return; }
         const btn = $(this).prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Menyimpan...');
@@ -478,7 +466,6 @@ $(document).ready(function() {
         }
     });
 
-    // Hapus Individual
     tableElement.on('click', '.delete-btn', function() {
         const empNo = $(this).data('id');
         const userName = $(this).data('name');
@@ -496,7 +483,6 @@ $(document).ready(function() {
         });
     });
 
-    // Tambah User Baru
     const addModal = new bootstrap.Modal($('#addUserModal')[0]);
     $('#addUserBtn').on('click', () => {
         $('#addUserForm')[0].reset(); $('#add-notification-area').empty();
@@ -528,7 +514,6 @@ $(document).ready(function() {
         }
     });
 
-    // Init
     loadUsers();
     $('#refreshBtn').on('click', loadUsers);
 });

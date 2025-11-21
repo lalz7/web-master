@@ -8,15 +8,15 @@ import re
 import base64
 import json
 import logging
-import threading # <-- Diperlukan untuk LOG_LOCK
+import threading
 from concurrent.futures import ThreadPoolExecutor
+import uuid  # [PENTING] Untuk generate searchID unik
 
 # Impor konfigurasi (termasuk EVENT_MAP) dan modul database kustom
-# Kita tidak lagi mengimpor POLL_INTERVAL, BATCH_MAX_RESULTS, REQUEST_TIMEOUT
 from config import *
 import database as db
 
-# --- SETUP LOGGING (Tidak berubah) ---
+# --- SETUP LOGGING ---
 LOG_LOCK = threading.Lock()
 loggers = {}
 
@@ -85,21 +85,9 @@ def log_system(message, level="INFO"):
     console_message = f"[{d}] [{t}] [SYSTEM] [{log_level}] {message}"
     console_logger.info(console_message)
 
-def log_raw_event(device, event):
-    """Mencatat SEMUA event mentah ke folder SERVICE_LOG_DIR."""
-    logger = get_logger(SERVICE_LOG_DIR, sanitize_name(device_label(device)))
-    
-    major, minor = event.get("major"), event.get("minor")
-    event_desc = EVENT_MAP.get((major, minor), f"Event tidak dikenali (Major: {major}, Minor: {minor})")
-    
-    log_data = {
-        "time": event.get("time"),
-        "eventID": event.get("serialNo"),
-        "description": event_desc,
-        "employeeId": event.get("employeeNoString"),
-        "name": event.get("name"),
-    }
-    logger.info(json.dumps(log_data))
+# [DIHAPUS] Fungsi log_raw_event telah dihapus untuk menghemat ruang penyimpanan
+# Service log (log mentah) tidak akan dicatat lagi.
+
 # --- AKHIR SETUP LOGGING ---
 
 # --- Variabel Global & Kunci Thread ---
@@ -119,7 +107,7 @@ def parse_iso_time(time_str):
     return datetime.datetime.fromisoformat(time_str.replace(TIMEZONE, ''))
 # ----------------------------------
 
-# --- FUNGSI DATABASE (Spesifik untuk service ini) ---
+# --- FUNGSI DATABASE ---
 def set_last_sync_time(ip, time_iso_str):
     try: dt = parse_iso_time(time_iso_str)
     except Exception: dt = datetime.datetime.now()
@@ -142,12 +130,11 @@ def get_last_sync_time(ip):
     return dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
 # ----------------------------------------------------
 
-# --- FUNGSI API & PROSES EVENT (DIMODIFIKASI) ---
+# --- FUNGSI API & PROSES EVENT ---
 
 def download_image_with_retry(device, pictureURL, auth):
     """
     Mencoba mengunduh gambar.
-    Nilai max_retries dan request_timeout sekarang diambil dari database.
     """
     if not pictureURL:
         log(device, "URL Gambar kosong, download dilewati.", level="WARN")
@@ -172,29 +159,71 @@ def download_image_with_retry(device, pictureURL, auth):
             log(device, f"[Attempt {attempt}/{max_retries}] Error koneksi saat mengambil gambar: {e}", level="WARN")
         
         if attempt < max_retries:
-            time.sleep(2) # Jeda 2 detik antar retry (tetap)
+            time.sleep(2)
     
     log(device, f"Gagal mengunduh gambar setelah {max_retries} percobaan. URL: {pictureURL}", level="ERROR")
-    return None # Gagal setelah semua percobaan
+    return None
 
 # ----------------------------------------------------
 
-# --- HIKVISION & EVENT PROCESSING ---
+# --- HIKVISION & EVENT PROCESSING (SMART FALLBACK) ---
 def iso8601_now(offset_seconds=0):
     t = datetime.datetime.now() - datetime.timedelta(seconds=offset_seconds)
     return t.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
 
 def get_events_from_device(device, start_time, end_time, batch_max, timeout):
+    """
+    Mengambil event dengan logika 'Smart Fallback':
+    1. Coba format standar (dengan Timezone).
+    2. Jika Error 400, coba format alternatif (tanpa Timezone).
+    """
     ip, user, password = device.get("ip"), device.get("username"), device.get("password")
     url = f"http://{ip}/ISAPI/AccessControl/AcsEvent?format=json"
-    body = {"AcsEventCond": {"searchID": "batch", "searchResultPosition": 0, "maxResults": batch_max,
-                             "major": 0, "minor": 0, "startTime": start_time, "endTime": end_time}}
+    
+    # Fungsi internal untuk kirim request dengan searchID unik
+    def _send_request(s_time, e_time):
+        search_id = str(uuid.uuid4()) # [PENTING] UUID unik setiap request
+        body = {
+            "AcsEventCond": {
+                "searchID": search_id,
+                "searchResultPosition": 0,
+                "maxResults": batch_max,
+                "major": 0,
+                "minor": 0,
+                "startTime": s_time,
+                "endTime": e_time
+            }
+        }
+        return requests.post(url, json=body, auth=HTTPDigestAuth(user, password), timeout=timeout)
+
+    # --- Percobaan 1: Format Standar ---
     try:
-        r = requests.post(url, json=body, auth=HTTPDigestAuth(user, password), timeout=timeout)
+        r = _send_request(start_time, end_time)
         r.raise_for_status()
         return r.json().get("AcsEvent", {}).get("InfoList", [])
+    
+    except requests.exceptions.HTTPError as e:
+        # Jika error 400 (Bad Request), kemungkinan mesin menolak timezone
+        if e.response.status_code == 400:
+            try:
+                # Hapus timezone (+07:00)
+                s_clean = start_time.split('+')[0]
+                e_clean = end_time.split('+')[0]
+                
+                r_retry = _send_request(s_clean, e_clean)
+                r_retry.raise_for_status()
+                
+                log(device, "Berhasil ambil event dengan format alternatif (No-Timezone).", level="INFO")
+                return r_retry.json().get("AcsEvent", {}).get("InfoList", [])
+            
+            except Exception as e_retry:
+                log(device, f"Gagal juga dengan format alternatif: {e_retry}", level="ERROR")
+        else:
+            log(device, f"Gagal mengambil event (HTTP {e.response.status_code}): {e}", level="ERROR")
+            
     except requests.exceptions.RequestException as e:
         log(device, f"Gagal mengambil event. Error koneksi: {e}", level="ERROR")
+        
     return []
 
 def get_event_desc(event):
@@ -203,7 +232,7 @@ def get_event_desc(event):
 
 def save_event(event, device):
     """
-    Fungsi ini sekarang HANYA mengunduh gambar dan menyimpan ke DB.
+    Fungsi ini HANYA mengunduh gambar dan menyimpan ke DB.
     TIDAK LAGI MENGIRIM KE API.
     """
     user, password = device.get("username"), device.get("password")
@@ -218,12 +247,10 @@ def save_event(event, device):
     except Exception:
         dt, date_value, time_value = None, "0000-00-00", "00:00:00"
 
-    # --- PENGATURAN BARU DARI DB ---
     try:
         realtime_tolerance = int(db.get_setting('realtime_tolerance', '120'))
     except ValueError:
         realtime_tolerance = 120
-    # -------------------------------
 
     sync_type = "realtime" if dt and abs((datetime.datetime.now() - dt).total_seconds()) <= realtime_tolerance else "catch-up"
     event_desc = get_event_desc(event)
@@ -291,7 +318,7 @@ def save_event(event, device):
         conn.close()
 # ----------------------------------------------------
 
-# --- PING & WORKER (SEMUA LOGIKA PING DAN NOTIFIKASI DIHAPUS) ---
+# --- PING & WORKER ---
 def process_device(device):
     ip = device.get("ip")
     if not all([device.get("username"), device.get("password")]):
@@ -299,7 +326,6 @@ def process_device(device):
         return
         
     try:
-        # --- PENGATURAN BARU DARI DB ---
         try:
             batch_max = int(db.get_setting('event_batch_max', '100'))
             timeout = int(db.get_setting('request_timeout', '30'))
@@ -308,14 +334,12 @@ def process_device(device):
             batch_max = 100
             timeout = 30
             sleep_delay = 1
-        # -------------------------------
 
         last_sync_str = get_last_sync_time(ip)
         now_time_str = iso8601_now()
         start_dt, end_dt = parse_iso_time(last_sync_str), parse_iso_time(now_time_str)
         time_diff_seconds = (end_dt - start_dt).total_seconds()
         
-        # Menggunakan pengaturan dari DB
         if time_diff_seconds > BIG_CATCHUP_THRESHOLD_SECONDS: # BIG_CATCHUP masih dari config.py
             all_events = []
             current_start_dt = start_dt
@@ -324,12 +348,12 @@ def process_device(device):
                 chunk_events = get_events_from_device(device, 
                                                     current_start_dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE, 
                                                     current_end_dt.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE,
-                                                    batch_max, timeout) # <-- Menggunakan var
+                                                    batch_max, timeout)
                 if chunk_events: all_events.extend(chunk_events)
                 current_start_dt = current_end_dt
             events = all_events
         else:
-            events = get_events_from_device(device, last_sync_str, now_time_str, batch_max, timeout) # <-- Menggunakan var
+            events = get_events_from_device(device, last_sync_str, now_time_str, batch_max, timeout)
         
         if not events: return
         
@@ -345,18 +369,15 @@ def process_device(device):
 
         saved_count = 0
         for e in new_events:
-            log_raw_event(device, e)
+            # [DIHAPUS] Tidak lagi mencatat log raw/service log
             
-            # --- JEDA DINAMIS DARI DB ---
             time.sleep(sleep_delay)
-            # ---------------------------
             
             event_desc = get_event_desc(e)
             
             if event_desc == "Face Recognized":
                 try:
                     time_value = datetime.datetime.strptime(e.get("time")[:19], "%Y-%m-%dT%H:%M:%S").strftime("%H:%M:%S")
-                    
                     try:
                         realtime_tolerance = int(db.get_setting('realtime_tolerance', '120'))
                     except ValueError:
@@ -385,9 +406,8 @@ def process_device(device):
             
     except Exception as e:
         log(device, f"Terjadi error tak terduga: {e}", level="ERROR")
-# ----------------------------------------------------
 
-# --- MAIN LOOP (DIMODIFIKASI - TANPA CLEANUP) ---
+# --- MAIN LOOP ---
 def main_sync():
     db.init_db()
     log_system("Memulai [Sync Service] - (HANYA MENGAMBIL EVENT)...")
@@ -399,16 +419,13 @@ def main_sync():
                 log_system("Tidak ada device yang terdaftar. Menunggu 15 detik..."), time.sleep(15)
                 continue
             
-            # Menggunakan ThreadPoolExecutor untuk mengambil data dari semua perangkat secara paralel
             with ThreadPoolExecutor(max_workers=len(devices)) as executor:
                 executor.map(process_device, devices)
             
-            # --- PENGATURAN BARU DARI DB ---
             try:
                 poll_interval = int(db.get_setting('poll_interval', '2'))
             except ValueError:
                 poll_interval = 2
-            # -------------------------------
             
             time.sleep(poll_interval) 
             
