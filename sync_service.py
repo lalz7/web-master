@@ -172,17 +172,18 @@ def iso8601_now(offset_seconds=0):
     return t.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE
 
 def get_events_from_device(device, start_time, end_time, batch_max, timeout):
-    """
-    Mengambil event dengan logika 'Smart Fallback':
-    1. Coba format standar (dengan Timezone).
-    2. Jika Error 400, coba format alternatif (tanpa Timezone).
-    """
+
     ip, user, password = device.get("ip"), device.get("username"), device.get("password")
-    url = f"http://{ip}/ISAPI/AccessControl/AcsEvent?format=json"
     
-    # Fungsi internal untuk kirim request dengan searchID unik
+    # URL Standar
+    url = f"http://{ip}/ISAPI/AccessControl/AcsEvent?format=json"
+
+    # Fungsi internal pengirim request
     def _send_request(s_time, e_time):
-        search_id = str(uuid.uuid4()) # [PENTING] UUID unik setiap request
+        # Gunakan random string pendek untuk searchID agar sesi selalu baru
+        import random
+        search_id = f"search_{random.randint(1000, 9999)}"
+        
         body = {
             "AcsEventCond": {
                 "searchID": search_id,
@@ -194,35 +195,43 @@ def get_events_from_device(device, start_time, end_time, batch_max, timeout):
                 "endTime": e_time
             }
         }
-        return requests.post(url, json=body, auth=HTTPDigestAuth(user, password), timeout=timeout)
+        headers = {"Content-Type": "application/json"}
+        return requests.post(url, json=body, auth=HTTPDigestAuth(user, password), headers=headers, timeout=timeout)
 
-    # --- Percobaan 1: Format Standar ---
     try:
+        # --- Percobaan 1: Normal (dengan Timezone) ---
         r = _send_request(start_time, end_time)
+        
+        # Handle Error 400 (Biasanya masalah format waktu)
+        if r.status_code == 400:
+            log(device, f"Gagal Format Standar (400). Response: {r.text}", level="WARN")
+            
+            # --- Percobaan 2: Retry Tanpa Timezone ---
+            s_clean = start_time.split('+')[0]
+            e_clean = end_time.split('+')[0]
+            
+            log(device, f"Mencoba retry tanpa timezone: {s_clean} s/d {e_clean}...", level="INFO")
+            r_retry = _send_request(s_clean, e_clean)
+            
+            if r_retry.status_code == 200:
+                log(device, "Berhasil dengan format tanpa timezone!", level="INFO")
+                return r_retry.json().get("AcsEvent", {}).get("InfoList", [])
+            else:
+                log(device, f"Tetap gagal (HTTP {r_retry.status_code}).", level="ERROR")
+                return []
+
         r.raise_for_status()
         return r.json().get("AcsEvent", {}).get("InfoList", [])
-    
+
     except requests.exceptions.HTTPError as e:
-        # Jika error 400 (Bad Request), kemungkinan mesin menolak timezone
-        if e.response.status_code == 400:
-            try:
-                # Hapus timezone (+07:00)
-                s_clean = start_time.split('+')[0]
-                e_clean = end_time.split('+')[0]
-                
-                r_retry = _send_request(s_clean, e_clean)
-                r_retry.raise_for_status()
-                
-                log(device, "Berhasil ambil event dengan format alternatif (No-Timezone).", level="INFO")
-                return r_retry.json().get("AcsEvent", {}).get("InfoList", [])
-            
-            except Exception as e_retry:
-                log(device, f"Gagal juga dengan format alternatif: {e_retry}", level="ERROR")
+        if e.response.status_code == 401:
+             log(device, "GAGAL AUTH (401). Device terkunci/password salah. Jeda 10s...", level="ERROR")
+             time.sleep(10)
         else:
-            log(device, f"Gagal mengambil event (HTTP {e.response.status_code}): {e}", level="ERROR")
-            
+             log(device, f"HTTP Error: {e}", level="ERROR")
+
     except requests.exceptions.RequestException as e:
-        log(device, f"Gagal mengambil event. Error koneksi: {e}", level="ERROR")
+        log(device, f"Koneksi Error: {e}", level="ERROR")
         
     return []
 
@@ -231,10 +240,6 @@ def get_event_desc(event):
     return EVENT_MAP.get((major, minor))
 
 def save_event(event, device):
-    """
-    Fungsi ini HANYA mengunduh gambar dan menyimpan ke DB.
-    TIDAK LAGI MENGIRIM KE API.
-    """
     user, password = device.get("username"), device.get("password")
     auth = HTTPDigestAuth(user, password)
     
