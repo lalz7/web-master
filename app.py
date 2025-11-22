@@ -703,19 +703,19 @@ def api_get_logs_by_date(date_string):
 
 @app.route('/api/ask-ai', methods=['POST'])
 def api_ask_ai():
-    """Endpoint untuk Chatbot AI di Frontend."""
     data = request.json
     question = data.get('question')
-    # Ambil history dari request, default list kosong jika tidak ada
-    history = data.get('history', []) 
+    history = data.get('history', [])
+    
     if not question:
         return jsonify({'error': 'Pertanyaan kosong'}), 400
-    result = ai_service.ask_gemini(question, history)
-    
-    if result["success"]:
-        return jsonify({'answer': result["answer"]})
-    else:
-        return jsonify({'error': result["answer"]}), 500
+
+    # Menggunakan fungsi stream dari ai_service
+    # Response akan dikirim sebagai text/plain secara bertahap
+    return Response(
+        ai_service.ask_gemini_stream(question, history), 
+        mimetype='text/plain'
+    )
     
 # --- PENGGANTI FUNGSI api_hris_create_user (Logika Update) ---
 # (Pastikan 'datetime', 'base64', 'json', 'requests', 'HTTPDigestAuth', 'jsonify', 'time' sudah diimpor di atas)

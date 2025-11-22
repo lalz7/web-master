@@ -93,9 +93,6 @@ def get_system_context():
         3. LIVE LOG TERAKHIR:
         {events_str}
 
-        4. CONFIG:
-        - WA Notif: {db.get_setting('whatsapp_enabled')}
-        - Auto Cleanup: {db.get_setting('cleanup_days')} hari
         """
         return context_prompt
 
@@ -160,3 +157,45 @@ def ask_gemini(user_question, chat_history=[]):
 
     except Exception as e:
         return {"success": False, "answer": f"Error koneksi AI: {str(e)}"}
+
+def ask_gemini_stream(user_question, chat_history=[]):
+    """
+    Generator untuk streaming respon dari Gemini.
+    """
+    if not AI_AVAILABLE:
+        yield "Layanan AI belum dikonfigurasi atau API Key salah."
+        return
+
+    try:
+        # 1. Ambil Data Sistem & History
+        system_data = get_system_context()
+        
+        formatted_history = []
+        for msg in chat_history:
+            role = "user" if msg.get("role") == "user" else "model"
+            formatted_history.append({
+                "role": role,
+                "parts": [msg.get("text", "")]
+            })
+
+        # 2. Mulai Chat
+        chat = model.start_chat(history=formatted_history)
+
+        # 3. Prompt
+        full_prompt = f"""
+        Anda adalah Gemini, asisten cerdas dashboard...
+        (Gunakan prompt yang sama dengan fungsi ask_gemini di atas)
+        {system_data}
+        PERTANYAAN USER: "{user_question}"
+        """
+        
+        # 4. Kirim dengan stream=True
+        response = chat.send_message(full_prompt, stream=True)
+        
+        # 5. Yield potongan teks
+        for chunk in response:
+            if chunk.text:
+                yield chunk.text
+
+    except Exception as e:
+        yield f"Error streaming AI: {str(e)}"
